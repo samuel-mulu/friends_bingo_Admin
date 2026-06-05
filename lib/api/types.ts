@@ -61,9 +61,9 @@ export interface OverviewReport {
   totalPlayers: number;
   activePlayers: number;
   blockedPlayers: number;
-  totalGames: number;
-  activeGames: number;
-  finishedGamesToday: number;
+  totalSlots: number;
+  activeSessions: number;
+  finishedSessionsToday: number;
   pendingDeposits: number;
   pendingWithdrawals: number;
   depositsTodayTotal: string;
@@ -174,28 +174,19 @@ export interface GameRuleSummary {
 
 export interface AdminGame {
   id: string;
-  code: string;
+  staticCode: string;
   name: string;
   gameRuleId: string | null;
   gameRule: GameRuleSummary | null;
   gameType: string;
-  entryFee: string;
-  prizeAmount: string;
   status: GameStatus;
-  playOrder: number | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-  winnerCartelaId: string | null;
+  sortOrder: number | null;
   createdAt: string;
   updatedAt: string;
-  registeredCartelasCount: number;
 }
 
 export interface CreateGamePayload {
   gameRuleId: string;
-  entryFee: string;
-  prizeAmount: string;
-  playOrder?: number;
 }
 
 export interface UpdateGameStatusPayload {

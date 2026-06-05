@@ -8,7 +8,7 @@ import type {
 } from "@/lib/api/types";
 
 const baseURL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3002";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3000";
 
 export class ApiError extends Error {
   statusCode?: number;

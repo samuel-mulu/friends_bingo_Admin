@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useMemo } from "react";
@@ -112,19 +113,19 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
         />
         <MetricCard
           title="Active Games"
-          value={overview.activeGames.toLocaleString()}
-          description={`${overview.finishedGamesToday.toLocaleString()} finished today`}
+          value={(overview.activeSessions ?? 0).toLocaleString()}
+          description={`${(overview.finishedSessionsToday ?? 0).toLocaleString()} finished today`}
           icon={Gamepad2}
         />
         <MetricCard
           title="Pending Deposits"
-          value={overview.pendingDeposits.toLocaleString()}
+          value={(overview.pendingDeposits ?? 0).toLocaleString()}
           description="Needs finance review"
           icon={ArrowDownToLine}
         />
         <MetricCard
           title="Pending Withdrawals"
-          value={overview.pendingWithdrawals.toLocaleString()}
+          value={(overview.pendingWithdrawals ?? 0).toLocaleString()}
           description="Awaiting approval or payout"
           icon={ArrowUpFromLine}
         />

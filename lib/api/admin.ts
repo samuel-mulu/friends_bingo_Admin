@@ -50,6 +50,26 @@ export function getGamesReport(params: ReportDateRangeParams) {
   });
 }
 
+export interface LiveGameResponse {
+  type: "session" | "slot";
+  data: { id: string; [key: string]: unknown };
+}
+
+export function getCurrentLiveSession() {
+  return apiRequest<LiveGameResponse | null>({
+    url: "/games/current/live",
+    method: "GET",
+  });
+}
+
+export function extractLiveSessionId(
+  live: LiveGameResponse | null | undefined,
+): string | null {
+  if (!live) return null;
+  if (live.type === "session") return live.data.id as string;
+  return null;
+}
+
 export function getAdminDeposits(page = 1, pageSize = 20) {
   return apiPaginatedRequest<AdminDeposit>({
     url: "/admin/deposits",
@@ -127,18 +147,20 @@ export function getAdminGameRules() {
 }
 
 export function getAdminGames(page = 1, pageSize = 20) {
+  // New architecture: games are queued as slots
   return apiPaginatedRequest<AdminGame>({
-    url: "/admin/games",
+    url: "/admin/slots",
     method: "GET",
     params: { page, pageSize },
   });
 }
 
 export function createAdminGame(payload: CreateGamePayload) {
+  // New architecture: create a slot from a game rule id only
   return apiRequest<AdminGame>({
-    url: "/admin/games",
+    url: "/admin/slots",
     method: "POST",
-    data: payload,
+    data: { gameRuleId: payload.gameRuleId },
   });
 }
 
@@ -146,52 +168,62 @@ export function updateAdminGameStatus(
   gameId: string,
   payload: UpdateGameStatusPayload,
 ) {
+  // New architecture: update slot status
   return apiRequest<AdminGame>({
-    url: `/admin/games/${gameId}/status`,
+    url: `/admin/slots/${gameId}/status`,
     method: "PATCH",
     data: payload,
   });
 }
 
-export function startAdminGame(gameId: string) {
+export function startAdminGame(gameId: string, entryFee?: string) {
+  // New architecture: start a session from a slot
   return apiRequest<AdminGame>({
-    url: `/admin/games/${gameId}/start`,
+    url: `/admin/slots/${gameId}/start`,
     method: "POST",
+    data: entryFee ? { entryFee } : undefined,
   });
 }
 
-export function moveAdminGameQueue(
-  gameId: string,
-  direction: "up" | "down",
-) {
-  return apiRequest<AdminGame>({
-    url: `/admin/games/${gameId}/queue`,
+export function reorderAdminSlots(slotIds: string[]) {
+  return apiRequest<{ success: true }>({
+    url: "/admin/slots/reorder",
+    method: "POST",
+    data: { slotIds },
+  });
+}
+
+export function cancelBlockingSession(sessionId: string) {
+  return apiRequest<{ success: true; sessionId: string }>({
+    url: `/admin/sessions/${sessionId}/cancel`,
     method: "PATCH",
-    data: { direction },
   });
 }
 
 export function callAdminGameNumber(
-  gameId: string,
+  sessionId: string,
   payload: CallNumberPayload,
 ) {
+  // New architecture: calling numbers targets a session
   return apiRequest({
-    url: `/admin/games/${gameId}/call-number`,
+    url: `/admin/sessions/${sessionId}/call-number`,
     method: "POST",
     data: payload,
   });
 }
 
-export function getGameDetail(gameId: string) {
+export function getGameDetail(slotId: string) {
+  // Public endpoint for slot detail
   return apiRequest<AdminGame>({
-    url: `/games/${gameId}`,
+    url: `/games/slots/${slotId}`,
     method: "GET",
   });
 }
 
-export function getGameCalledNumbers(gameId: string) {
+export function getGameCalledNumbers(sessionId: string) {
+  // Public endpoint for session called numbers
   return apiRequest<CalledNumbersResponse>({
-    url: `/games/${gameId}/called-numbers`,
+    url: `/games/sessions/${sessionId}/called-numbers`,
     method: "GET",
   });
 }

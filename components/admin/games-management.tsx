@@ -27,12 +27,15 @@ import {
 
 import {
   callAdminGameNumber,
+  cancelBlockingSession,
   createAdminGame,
+  extractLiveSessionId,
   getAdminGameRules,
   getAdminGames,
   getGameCalledNumbers,
   getGameDetail,
-  moveAdminGameQueue,
+  getCurrentLiveSession,
+  reorderAdminSlots,
   startAdminGame,
   updateAdminGameStatus,
 } from "@/lib/api/admin";
@@ -102,22 +105,18 @@ const calledNumbersQueryKey = (gameId: string) =>
 
 const statusTransitionOptions: Record<GameStatus, GameStatus[]> = {
   NEXT: ["CANCELLED"],
-  CHECKING: ["CANCELLED"],
-  PLAYING: ["CANCELLED"],
+  CHECKING: ["PLAYING", "FINISHED", "CANCELLED"],
+  PLAYING: ["CHECKING", "CANCELLED"],
   FINISHED: [],
   CANCELLED: [],
 };
 
 type CreateGameFormState = {
   gameRuleId: string;
-  entryFee: string;
-  prizeAmount: string;
 };
 
 const initialCreateGameForm: CreateGameFormState = {
   gameRuleId: "",
-  entryFee: "",
-  prizeAmount: "",
 };
 
 export function GamesManagement() {
@@ -134,7 +133,9 @@ export function GamesManagement() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [startTarget, setStartTarget] = useState<AdminGame | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [blockingSessionId, setBlockingSessionId] = useState<string | null>(null);
   const [callNumberTarget, setCallNumberTarget] = useState<AdminGame | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [callNumberForm, setCallNumberForm] = useState<CallNumberPayload>({
     letter: "B",
     number: 1,
@@ -161,19 +162,19 @@ export function GamesManagement() {
   });
 
   const calledNumbersQuery = useQuery({
-    queryKey: selectedGameId
-      ? calledNumbersQueryKey(selectedGameId)
+    queryKey: activeSessionId
+      ? calledNumbersQueryKey(activeSessionId)
       : ["admin", "games", "called-numbers"],
-    queryFn: () => getGameCalledNumbers(selectedGameId as string),
-    enabled: Boolean(selectedGameId),
+    queryFn: () => getGameCalledNumbers(activeSessionId as string),
+    enabled: Boolean(activeSessionId),
   });
 
   const modalCalledNumbersQuery = useQuery({
     queryKey: callNumberTarget
       ? calledNumbersQueryKey(callNumberTarget.id)
       : ["admin", "games", "called-numbers", "modal"],
-    queryFn: () => getGameCalledNumbers(callNumberTarget?.id as string),
-    enabled: Boolean(callNumberTarget),
+    queryFn: () => getGameCalledNumbers(activeSessionId as string),
+    enabled: Boolean(callNumberTarget) && Boolean(activeSessionId),
     refetchInterval: isAutoCalling ? 3000 : false,
   });
 
@@ -181,8 +182,6 @@ export function GamesManagement() {
     mutationFn: () =>
       createAdminGame({
         gameRuleId: createForm.gameRuleId,
-        entryFee: createForm.entryFee.trim(),
-        prizeAmount: createForm.prizeAmount.trim(),
       }),
     onSuccess: async () => {
       setCreateOpen(false);
@@ -207,7 +206,7 @@ export function GamesManagement() {
       setStatusTarget(null);
       setStatusValue("");
       setStatusError(null);
-      await invalidateGameQueries(queryClient, variables.gameId);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
     onError: (error) => {
       setStatusError(
@@ -223,38 +222,74 @@ export function GamesManagement() {
     }: {
       gameId: string;
       direction: "up" | "down";
-    }) => moveAdminGameQueue(gameId, direction),
+    }) => {
+      const current = queryClient.getQueryData<{ items: AdminGame[] }>(
+        gamesQueryKey(page),
+      );
+      const items = current?.items ? [...current.items] : [];
+      const index = items.findIndex((g) => g.id === gameId);
+      if (index === -1) return Promise.resolve();
+      if (direction === "up" && index > 0) {
+        [items[index - 1], items[index]] = [items[index], items[index - 1]];
+      } else if (direction === "down" && index < items.length - 1) {
+        [items[index], items[index + 1]] = [items[index + 1], items[index]];
+      }
+      const slotIds = items.map((g) => g.id);
+      return reorderAdminSlots(slotIds).then(() => {});
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
   });
 
   const startMutation = useMutation({
-    mutationFn: (gameId: string) => startAdminGame(gameId),
-    onSuccess: async (_, gameId) => {
+    mutationFn: ({ gameId, entryFee }: { gameId: string; entryFee?: string }) =>
+      startAdminGame(gameId, entryFee),
+    onSuccess: async (_, { gameId }) => {
       setStartTarget(null);
       setStartError(null);
+      setBlockingSessionId(null);
       await invalidateGameQueries(queryClient, gameId);
     },
+    onError: async (error) => {
+      const msg = getApiErrorMessage(error, "The game could not be started.");
+      setStartError(msg);
+      if (msg.toLowerCase().includes("already active")) {
+        try {
+          const live = await getCurrentLiveSession();
+          const sid = extractLiveSessionId(live);
+          if (sid) setBlockingSessionId(sid);
+        } catch {}
+      }
+    },
+  });
+
+  const cancelBlockingMutation = useMutation({
+    mutationFn: (sessionId: string) => cancelBlockingSession(sessionId),
+    onSuccess: async () => {
+      setBlockingSessionId(null);
+      setStartError(null);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    },
     onError: (error) => {
-      setStartError(getApiErrorMessage(error, "The game could not be started."));
+      setStartError(getApiErrorMessage(error, "Could not cancel the blocking session."));
     },
   });
 
   const callNumberMutation = useMutation({
     mutationFn: ({
-      gameId,
+      sessionId,
       payload,
     }: {
-      gameId: string;
+      sessionId: string;
       payload: CallNumberPayload;
-    }) => callAdminGameNumber(gameId, payload),
-    onSuccess: async (_, variables) => {
+    }) => callAdminGameNumber(sessionId, payload),
+    onSuccess: async () => {
       if (isAutoCalling && remainingCallNumbers.length <= 1) {
         setIsAutoCalling(false);
       }
       setCallNumberError(null);
-      await invalidateGameQueries(queryClient, variables.gameId);
+      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
     onError: (error) => {
       setIsAutoCalling(false);
@@ -270,8 +305,8 @@ export function GamesManagement() {
       .filter((game) => game.status === "NEXT")
       .sort(
         (left, right) =>
-          (left.playOrder ?? Number.MAX_SAFE_INTEGER) -
-          (right.playOrder ?? Number.MAX_SAFE_INTEGER),
+          (left.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+          (right.sortOrder ?? Number.MAX_SAFE_INTEGER),
       );
 
     return {
@@ -324,10 +359,12 @@ export function GamesManagement() {
       }
 
       setCallNumberForm(nextCall);
-      callNumberMutation.mutate({
-        gameId: callNumberTarget.id,
-        payload: nextCall,
-      });
+      if (activeSessionId) {
+        callNumberMutation.mutate({
+          sessionId: activeSessionId,
+          payload: nextCall,
+        });
+      }
     }, 7000);
 
     return () => {
@@ -371,7 +408,7 @@ export function GamesManagement() {
                 <div className="text-muted-foreground">
                   {summary.queued.toLocaleString()} in queue
                   {summary.nextUp
-                    ? ` · next: ${summary.nextUp.code}`
+                    ? ` · next: ${summary.nextUp.staticCode}`
                     : ""}
                 </div>
               </div>
@@ -394,7 +431,7 @@ export function GamesManagement() {
 
         <CardContent className="px-0 pt-0">
           {gamesQuery.isLoading ? (
-            <AdminTableSkeleton columns={9} />
+            <AdminTableSkeleton columns={6} />
           ) : gamesQuery.isError ? (
             <AdminErrorState
               title="Could not load games"
@@ -418,8 +455,6 @@ export function GamesManagement() {
                     <TableHead>Rule</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Order</TableHead>
-                    <TableHead className="text-right">Entry fee</TableHead>
-                    <TableHead className="text-right">Prize</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -428,7 +463,7 @@ export function GamesManagement() {
                   {gamesQuery.data.items.map((game) => {
                     const nextStatuses = statusTransitionOptions[game.status];
                     const canStart =
-                      game.status === "NEXT" && game.playOrder === 1;
+                      game.status === "NEXT" && game.sortOrder === 1;
                     const canReorder = game.status === "NEXT";
                     const canCallNumber = game.status === "PLAYING";
 
@@ -436,7 +471,7 @@ export function GamesManagement() {
                       <TableRow key={game.id}>
                         <TableCell>
                           <span className="font-mono text-xs text-muted-foreground">
-                            {game.code}
+                            {game.staticCode}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -444,9 +479,7 @@ export function GamesManagement() {
                             <div className="font-medium">
                               {game.gameRule?.name ?? game.name}
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {game.registeredCartelasCount.toLocaleString()} registrations
-                            </div>
+                            
                           </div>
                         </TableCell>
                         <TableCell>
@@ -456,7 +489,7 @@ export function GamesManagement() {
                           <div className="flex items-center justify-end gap-2">
                             <span className="font-medium">
                               {game.status === "NEXT"
-                                ? (game.playOrder ?? "-")
+                                ? (game.sortOrder ?? "-")
                                 : "-"}
                             </span>
                             {canReorder ? (
@@ -493,12 +526,7 @@ export function GamesManagement() {
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatCurrency(game.entryFee)}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatCurrency(game.prizeAmount)}
-                        </TableCell>
+                        
                         <TableCell>{formatDateTime(game.createdAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -539,11 +567,26 @@ export function GamesManagement() {
                               variant="secondary"
                               size="sm"
                               disabled={!canCallNumber}
-                              onClick={() => {
+                              onClick={async () => {
                                 setCallNumberError(null);
                                 setIsAutoCalling(false);
-                                setCallNumberTarget(game);
+                                setCallNumberTarget(game); // open modal regardless
                                 setCallNumberForm({ letter: "B", number: 1 });
+                                try {
+                                  const live = await getCurrentLiveSession();
+                                  const sid = extractLiveSessionId(live);
+                                  if (!sid) {
+                                    setCallNumberError(
+                                      "No active session found. Start a game first.",
+                                    );
+                                    return;
+                                  }
+                                  setActiveSessionId(sid);
+                                } catch (e) {
+                                  setCallNumberError(
+                                    "Could not resolve active session for calling numbers.",
+                                  );
+                                }
                               }}
                             >
                               <Radio className="size-4" />
@@ -578,7 +621,7 @@ export function GamesManagement() {
           <DialogHeader>
             <DialogTitle>Create game</DialogTitle>
             <DialogDescription>
-              Create a NEXT game round. It will be added to the end of the queue
+              Create a NEXT game round from a rule. It will be added to the end of the queue
               automatically with the next order number.
             </DialogDescription>
           </DialogHeader>
@@ -604,36 +647,7 @@ export function GamesManagement() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="entry-fee">Entry fee</Label>
-              <Input
-                id="entry-fee"
-                inputMode="decimal"
-                placeholder="10"
-                value={createForm.entryFee}
-                onChange={(event) =>
-                  setCreateForm((current) => ({
-                    ...current,
-                    entryFee: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="prize-amount">Prize amount</Label>
-              <Input
-                id="prize-amount"
-                inputMode="decimal"
-                placeholder="500"
-                value={createForm.prizeAmount}
-                onChange={(event) =>
-                  setCreateForm((current) => ({
-                    ...current,
-                    prizeAmount: event.target.value,
-                  }))
-                }
-              />
-            </div>
+            {/* Entry fee and prize are managed during session lifecycle */}
           </div>
 
           {createError ? (
@@ -652,10 +666,7 @@ export function GamesManagement() {
             </Button>
             <Button
               onClick={() => createGameMutation.mutate()}
-              disabled={
-                createGameMutation.isPending ||
-                !canCreateGame(createForm)
-              }
+              disabled={createGameMutation.isPending || !canCreateGame(createForm)}
             >
               <Save className="size-4" />
               Create game
@@ -679,7 +690,7 @@ export function GamesManagement() {
             <DialogTitle>Change game status</DialogTitle>
             <DialogDescription>
               {statusTarget
-                ? `Update ${statusTarget.code} - ${statusTarget.name} to the next valid status.`
+                ? `Update ${statusTarget.staticCode} - ${statusTarget.name} to the next valid status.`
                 : "Select the next game status."}
             </DialogDescription>
           </DialogHeader>
@@ -750,17 +761,37 @@ export function GamesManagement() {
         title="Start game"
         description={
           startTarget
-            ? `Start ${startTarget.code} - ${startTarget.name}. This is order 1 in the queue. The next queued game will move up automatically.`
+            ? `Start ${startTarget.staticCode} - ${startTarget.name}. This is order 1 in the queue. The next queued game will move up automatically.`
             : "Start this game."
         }
         confirmLabel="Start game"
-        errorMessage={startTarget ? startError : null}
-        onConfirm={() => {
+        field={{ label: "Entry fee (default 10)", placeholder: "10", defaultValue: "10" }}
+        errorMessage={
+          startTarget
+            ? blockingSessionId
+              ? `${startError ?? "Another session is blocking."} Click 'Cancel blocking session' below to clear it, then try again.`
+              : startError
+            : null
+        }
+        extraContent={
+          blockingSessionId ? (
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={cancelBlockingMutation.isPending}
+              onClick={() => cancelBlockingMutation.mutate(blockingSessionId)}
+            >
+              {cancelBlockingMutation.isPending ? "Cancelling..." : "Cancel blocking session"}
+            </Button>
+          ) : undefined
+        }
+        onConfirm={(value) => {
           if (!startTarget) {
             return;
           }
 
-          startMutation.mutate(startTarget.id);
+          const entryFee = (value ?? "").trim() || undefined;
+          startMutation.mutate({ gameId: startTarget.id, entryFee });
         }}
         isPending={startMutation.isPending}
       />
@@ -778,7 +809,7 @@ export function GamesManagement() {
             <DialogTitle>Call number</DialogTitle>
             <DialogDescription>
               {callNumberTarget
-                ? `Call random Bingo numbers for ${callNumberTarget.code}. Keep this modal open during the game and close it only when you are done.`
+                ? `Call random Bingo numbers for ${callNumberTarget.staticCode}. Keep this modal open during the game and close it only when you are done.`
                 : "Record the next called number."}
             </DialogDescription>
           </DialogHeader>
@@ -932,10 +963,12 @@ export function GamesManagement() {
                   return;
                 }
 
-                callNumberMutation.mutate({
-                  gameId: callNumberTarget.id,
-                  payload: toCalledNumberPayload(callNumberForm.number),
-                });
+                if (activeSessionId) {
+                  callNumberMutation.mutate({
+                    sessionId: activeSessionId,
+                    payload: toCalledNumberPayload(callNumberForm.number),
+                  });
+                }
               }}
               disabled={
                 isAutoCalling ||
@@ -997,7 +1030,7 @@ export function GamesManagement() {
                           {gameDetailQuery.data.gameRule?.name ??
                             gameDetailQuery.data.name}
                         </CardTitle>
-                        <CardDescription>{gameDetailQuery.data.code}</CardDescription>
+                        <CardDescription>{gameDetailQuery.data.staticCode}</CardDescription>
                       </div>
                       <AdminStatusBadge status={gameDetailQuery.data.status} />
                     </div>
@@ -1012,20 +1045,8 @@ export function GamesManagement() {
                       value={gameDetailQuery.data.gameRule?.key ?? gameDetailQuery.data.gameType}
                     />
                     <DetailItem
-                      label="Registrations"
-                      value={gameDetailQuery.data.registeredCartelasCount.toLocaleString()}
-                    />
-                    <DetailItem
-                      label="Entry fee"
-                      value={formatCurrency(gameDetailQuery.data.entryFee)}
-                    />
-                    <DetailItem
-                      label="Prize amount"
-                      value={formatCurrency(gameDetailQuery.data.prizeAmount)}
-                    />
-                    <DetailItem
-                      label="Play order"
-                      value={gameDetailQuery.data.playOrder ?? "-"}
+                      label="Queue order"
+                      value={gameDetailQuery.data.sortOrder ?? "-"}
                     />
                     <DetailItem
                       label="Created at"
@@ -1034,28 +1055,7 @@ export function GamesManagement() {
                   </CardContent>
                 </Card>
 
-                <Card size="sm">
-                  <CardHeader>
-                    <CardTitle>Live progress</CardTitle>
-                    <CardDescription>
-                      Simple checkpoints for the current round and final result.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4 sm:grid-cols-2">
-                    <DetailItem
-                      label="Finished at"
-                      value={formatDateTime(gameDetailQuery.data.finishedAt)}
-                    />
-                    <DetailItem
-                      label="Winner cartela"
-                      value={gameDetailQuery.data.winnerCartelaId ?? "-"}
-                    />
-                    <DetailItem
-                      label="Called numbers"
-                      value={calledNumbers.length.toLocaleString()}
-                    />
-                  </CardContent>
-                </Card>
+                {/* Session-specific details are shown when inspecting a live session, not the slot */}
 
                 <Card size="sm">
                   <CardHeader>
@@ -1181,11 +1181,7 @@ function getRandomCallNumber(remainingNumbers: number[]) {
 }
 
 function canCreateGame(form: CreateGameFormState) {
-  return (
-    form.gameRuleId.trim().length > 0 &&
-    form.entryFee.trim().length > 0 &&
-    form.prizeAmount.trim().length > 0
-  );
+  return form.gameRuleId.trim().length > 0;
 }
 
 function isValidCalledNumber(value: number) {

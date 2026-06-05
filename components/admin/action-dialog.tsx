@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ export function ActionDialog({
   isPending = false,
   field,
   errorMessage,
+  extraContent,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -42,6 +43,7 @@ export function ActionDialog({
     required?: boolean;
   };
   errorMessage?: string | null;
+  extraContent?: ReactNode;
 }) {
   const [value, setValue] = useState(field?.defaultValue ?? "");
   const dialogKey = `${open ? "open" : "closed"}:${field?.defaultValue ?? ""}:${title}`;
@@ -69,6 +71,7 @@ export function ActionDialog({
             {errorMessage}
           </div>
         ) : null}
+        {extraContent ? <div>{extraContent}</div> : null}
         <DialogFooter>
           <Button
             variant="outline"
