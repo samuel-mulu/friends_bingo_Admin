@@ -163,15 +163,26 @@ export type GameStatus =
   | "FINISHED"
   | "CANCELLED";
 
+export interface GameRuleSummary {
+  id: string;
+  key: string;
+  name: string;
+  description?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
 export interface AdminGame {
   id: string;
   code: string;
   name: string;
+  gameRuleId: string | null;
+  gameRule: GameRuleSummary | null;
   gameType: string;
   entryFee: string;
   prizeAmount: string;
   status: GameStatus;
-  startsAt: string;
+  playOrder: number | null;
   startedAt: string | null;
   finishedAt: string | null;
   winnerCartelaId: string | null;
@@ -181,11 +192,10 @@ export interface AdminGame {
 }
 
 export interface CreateGamePayload {
-  name: string;
-  gameType: string;
+  gameRuleId: string;
   entryFee: string;
   prizeAmount: string;
-  startsAt: string;
+  playOrder?: number;
 }
 
 export interface UpdateGameStatusPayload {
@@ -255,4 +265,42 @@ export interface GamesReport {
   totalPrizeAmount: string;
   averagePlayersPerGame: number;
   winners: GamesReportWinner[];
+}
+
+export type BingoClaimStatus = "PENDING" | "VALID" | "INVALID";
+
+export interface BingoClaimUserSummary {
+  id: string;
+  fullName: string;
+  phoneNumber: string;
+}
+
+export interface AdminBingoClaim {
+  id: string;
+  gameId: string;
+  userId: string;
+  gameCartelaId: string;
+  status: BingoClaimStatus;
+  checkedPattern: string | null;
+  reason: string | null;
+  createdAt: string;
+  checkedAt: string | null;
+  user: BingoClaimUserSummary;
+  game: {
+    id: string;
+    code: string;
+    status: GameStatus;
+    prizeAmount: string;
+    gameRule: GameRuleSummary | null;
+  };
+  gameCartela: {
+    id: string;
+    status: string;
+    isWinner: boolean;
+    blockedAt: string | null;
+    cartela: {
+      id: string;
+      number: number;
+    };
+  };
 }

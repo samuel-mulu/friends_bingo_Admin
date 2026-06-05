@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
+  BadgeCheck,
   CreditCard,
   Gamepad2,
   LayoutDashboard,
@@ -18,6 +19,7 @@ export interface NavigationItem {
 export const adminNavigation: NavigationItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/games", label: "Games", icon: Gamepad2 },
+  { href: "/bingo-claims", label: "Bingo Claims", icon: BadgeCheck },
   { href: "/players", label: "Players", icon: Users },
   { href: "/deposits", label: "Deposits", icon: CreditCard },
   { href: "/withdrawals", label: "Withdrawals", icon: ReceiptText },

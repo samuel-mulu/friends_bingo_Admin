@@ -1,5 +1,6 @@
 import { apiPaginatedRequest, apiRequest } from "@/lib/api/client";
 import type {
+  AdminBingoClaim,
   AdminGame,
   AdminDeposit,
   AdminSession,
@@ -10,6 +11,7 @@ import type {
   CallNumberPayload,
   CreateGamePayload,
   FinancialReport,
+  GameRuleSummary,
   GamesReport,
   LoginPayload,
   OverviewReport,
@@ -117,6 +119,13 @@ export function getAdminUserById(userId: string) {
   });
 }
 
+export function getAdminGameRules() {
+  return apiRequest<GameRuleSummary[]>({
+    url: "/admin/game-rules",
+    method: "GET",
+  });
+}
+
 export function getAdminGames(page = 1, pageSize = 20) {
   return apiPaginatedRequest<AdminGame>({
     url: "/admin/games",
@@ -151,6 +160,17 @@ export function startAdminGame(gameId: string) {
   });
 }
 
+export function moveAdminGameQueue(
+  gameId: string,
+  direction: "up" | "down",
+) {
+  return apiRequest<AdminGame>({
+    url: `/admin/games/${gameId}/queue`,
+    method: "PATCH",
+    data: { direction },
+  });
+}
+
 export function callAdminGameNumber(
   gameId: string,
   payload: CallNumberPayload,
@@ -173,5 +193,28 @@ export function getGameCalledNumbers(gameId: string) {
   return apiRequest<CalledNumbersResponse>({
     url: `/games/${gameId}/called-numbers`,
     method: "GET",
+  });
+}
+
+export function getAdminBingoClaims(page = 1, pageSize = 20) {
+  return apiPaginatedRequest<AdminBingoClaim>({
+    url: "/admin/bingo-claims",
+    method: "GET",
+    params: { page, pageSize },
+  });
+}
+
+export function approveAdminBingoClaim(claimId: string) {
+  return apiRequest<AdminBingoClaim>({
+    url: `/admin/bingo-claims/${claimId}/approve`,
+    method: "PATCH",
+  });
+}
+
+export function rejectAdminBingoClaim(claimId: string, reason: string) {
+  return apiRequest<AdminBingoClaim>({
+    url: `/admin/bingo-claims/${claimId}/reject`,
+    method: "PATCH",
+    data: { reason },
   });
 }

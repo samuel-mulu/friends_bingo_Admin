@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   QueryClient,
   useMutation,
@@ -8,6 +14,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  ArrowDown,
+  ArrowUp,
   Eye,
   Play,
   Plus,
@@ -20,14 +28,20 @@ import {
 import {
   callAdminGameNumber,
   createAdminGame,
+  getAdminGameRules,
   getAdminGames,
   getGameCalledNumbers,
   getGameDetail,
+  moveAdminGameQueue,
   startAdminGame,
   updateAdminGameStatus,
 } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import type { AdminGame, CallNumberPayload, GameStatus } from "@/lib/api/types";
+import type {
+  AdminGame,
+  CallNumberPayload,
+  GameStatus,
+} from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ActionDialog } from "@/components/admin/action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
@@ -86,43 +100,29 @@ const gameDetailQueryKey = (gameId: string) => ["admin", "games", "detail", game
 const calledNumbersQueryKey = (gameId: string) =>
   ["admin", "games", "called-numbers", gameId] as const;
 
-const gameTypeOptions = [
-  "HALF_HOUSE",
-  "FULL_HOUSE",
-  "T_SHAPE",
-  "L_SHAPE",
-  "X_SHAPE",
-  "TIEZAZ",
-] as const;
-
 const statusTransitionOptions: Record<GameStatus, GameStatus[]> = {
-  NEXT: ["CHECKING", "CANCELLED"],
+  NEXT: ["CANCELLED"],
   CHECKING: ["CANCELLED"],
-  PLAYING: ["FINISHED"],
+  PLAYING: ["CANCELLED"],
   FINISHED: [],
   CANCELLED: [],
 };
 
-const callLetterOptions = ["B", "I", "N", "G", "O"] as const;
-
 type CreateGameFormState = {
-  name: string;
-  gameType: string;
+  gameRuleId: string;
   entryFee: string;
   prizeAmount: string;
-  startsAt: string;
 };
 
 const initialCreateGameForm: CreateGameFormState = {
-  name: "",
-  gameType: "HALF_HOUSE",
+  gameRuleId: "",
   entryFee: "",
   prizeAmount: "",
-  startsAt: "",
 };
 
 export function GamesManagement() {
   const queryClient = useQueryClient();
+  const autoCallTimerRef = useRef<number | null>(null);
   const [page, setPage] = useState(1);
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -140,10 +140,16 @@ export function GamesManagement() {
     number: 1,
   });
   const [callNumberError, setCallNumberError] = useState<string | null>(null);
+  const [isAutoCalling, setIsAutoCalling] = useState(false);
 
   const gamesQuery = useQuery({
     queryKey: gamesQueryKey(page),
     queryFn: () => getAdminGames(page, pageSize),
+  });
+
+  const gameRulesQuery = useQuery({
+    queryKey: ["admin", "game-rules"],
+    queryFn: getAdminGameRules,
   });
 
   const gameDetailQuery = useQuery({
@@ -162,14 +168,21 @@ export function GamesManagement() {
     enabled: Boolean(selectedGameId),
   });
 
+  const modalCalledNumbersQuery = useQuery({
+    queryKey: callNumberTarget
+      ? calledNumbersQueryKey(callNumberTarget.id)
+      : ["admin", "games", "called-numbers", "modal"],
+    queryFn: () => getGameCalledNumbers(callNumberTarget?.id as string),
+    enabled: Boolean(callNumberTarget),
+    refetchInterval: isAutoCalling ? 3000 : false,
+  });
+
   const createGameMutation = useMutation({
     mutationFn: () =>
       createAdminGame({
-        name: createForm.name.trim(),
-        gameType: createForm.gameType,
+        gameRuleId: createForm.gameRuleId,
         entryFee: createForm.entryFee.trim(),
         prizeAmount: createForm.prizeAmount.trim(),
-        startsAt: toIsoDateTime(createForm.startsAt),
       }),
     onSuccess: async () => {
       setCreateOpen(false);
@@ -203,6 +216,19 @@ export function GamesManagement() {
     },
   });
 
+  const queueMoveMutation = useMutation({
+    mutationFn: ({
+      gameId,
+      direction,
+    }: {
+      gameId: string;
+      direction: "up" | "down";
+    }) => moveAdminGameQueue(gameId, direction),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    },
+  });
+
   const startMutation = useMutation({
     mutationFn: (gameId: string) => startAdminGame(gameId),
     onSuccess: async (_, gameId) => {
@@ -224,12 +250,14 @@ export function GamesManagement() {
       payload: CallNumberPayload;
     }) => callAdminGameNumber(gameId, payload),
     onSuccess: async (_, variables) => {
-      setCallNumberTarget(null);
-      setCallNumberForm({ letter: "B", number: 1 });
+      if (isAutoCalling && remainingCallNumbers.length <= 1) {
+        setIsAutoCalling(false);
+      }
       setCallNumberError(null);
       await invalidateGameQueries(queryClient, variables.gameId);
     },
     onError: (error) => {
+      setIsAutoCalling(false);
       setCallNumberError(
         getApiErrorMessage(error, "The called number could not be recorded."),
       );
@@ -238,21 +266,88 @@ export function GamesManagement() {
 
   const summary = useMemo(() => {
     const items = gamesQuery.data?.items ?? [];
+    const queuedGames = items
+      .filter((game) => game.status === "NEXT")
+      .sort(
+        (left, right) =>
+          (left.playOrder ?? Number.MAX_SAFE_INTEGER) -
+          (right.playOrder ?? Number.MAX_SAFE_INTEGER),
+      );
 
     return {
       live: items.filter((game) => game.status === "PLAYING").length,
       checking: items.filter((game) => game.status === "CHECKING").length,
+      queued: queuedGames.length,
+      nextUp: queuedGames[0] ?? null,
     };
   }, [gamesQuery.data?.items]);
 
   const calledNumbers = calledNumbersQuery.data?.calledNumbers ?? [];
   const latestCalledNumber = calledNumbers.at(-1) ?? null;
+  const modalCalledNumbers = modalCalledNumbersQuery.data?.calledNumbers ?? [];
+  const latestModalCalledNumber = modalCalledNumbers.at(-1) ?? null;
+  const gameRules = useMemo(() => gameRulesQuery.data ?? [], [gameRulesQuery.data]);
+  const defaultGameRuleId = useMemo(
+    () => (gameRules.find((rule) => rule.key === "MANUAL") ?? gameRules[0])?.id ?? "",
+    [gameRules],
+  );
+  const remainingCallNumbers = getRemainingCallNumbers(modalCalledNumbers);
+  const autoCallActive = isAutoCalling && remainingCallNumbers.length > 0;
+  const closeCallNumberDialog = () => {
+    setIsAutoCalling(false);
+    setCallNumberTarget(null);
+    setCallNumberForm({ letter: "B", number: 1 });
+    setCallNumberError(null);
+  };
+
+  useEffect(() => {
+    if (!callNumberTarget && autoCallTimerRef.current) {
+      window.clearTimeout(autoCallTimerRef.current);
+      autoCallTimerRef.current = null;
+    }
+  }, [callNumberTarget]);
+
+  useEffect(() => {
+    if (!autoCallActive || !callNumberTarget) {
+      if (autoCallTimerRef.current) {
+        window.clearTimeout(autoCallTimerRef.current);
+        autoCallTimerRef.current = null;
+      }
+      return;
+    }
+
+    autoCallTimerRef.current = window.setTimeout(() => {
+      const nextCall = getRandomCallNumber(remainingCallNumbers);
+
+      if (!nextCall || callNumberMutation.isPending) {
+        return;
+      }
+
+      setCallNumberForm(nextCall);
+      callNumberMutation.mutate({
+        gameId: callNumberTarget.id,
+        payload: nextCall,
+      });
+    }, 7000);
+
+    return () => {
+      if (autoCallTimerRef.current) {
+        window.clearTimeout(autoCallTimerRef.current);
+        autoCallTimerRef.current = null;
+      }
+    };
+  }, [
+    autoCallActive,
+    callNumberMutation,
+    callNumberTarget,
+    remainingCallNumbers,
+  ]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Games"
-        description="Create upcoming bingo games, control status changes, start live sessions, and record called numbers from one operational workspace."
+        description="Create games into a numbered queue. Order 1 is always the current NEXT round. When it starts, the queue shifts up automatically."
       />
 
       <Card>
@@ -261,8 +356,8 @@ export function GamesManagement() {
             <div className="space-y-1">
               <CardTitle>Game operations</CardTitle>
               <CardDescription>
-                Manage the full setup and live control flow for each game
-                without leaving the admin dashboard.
+                New games join the end of the queue. Only order 1 can be
+                started. Finished or cancelled games leave the queue.
               </CardDescription>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -271,12 +366,22 @@ export function GamesManagement() {
                   {summary.live.toLocaleString()} live now
                 </div>
                 <div className="text-muted-foreground">
-                  {summary.checking.toLocaleString()} ready to start
+                  {summary.checking.toLocaleString()} under review
+                </div>
+                <div className="text-muted-foreground">
+                  {summary.queued.toLocaleString()} in queue
+                  {summary.nextUp
+                    ? ` · next: ${summary.nextUp.code}`
+                    : ""}
                 </div>
               </div>
               <Button
                 onClick={() => {
                   setCreateError(null);
+                  setCreateForm({
+                    ...initialCreateGameForm,
+                    gameRuleId: defaultGameRuleId,
+                  });
                   setCreateOpen(true);
                 }}
               >
@@ -310,12 +415,11 @@ export function GamesManagement() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
+                    <TableHead>Rule</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Order</TableHead>
                     <TableHead className="text-right">Entry fee</TableHead>
                     <TableHead className="text-right">Prize</TableHead>
-                    <TableHead>Starts</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -323,7 +427,9 @@ export function GamesManagement() {
                 <TableBody>
                   {gamesQuery.data.items.map((game) => {
                     const nextStatuses = statusTransitionOptions[game.status];
-                    const canStart = game.status === "CHECKING";
+                    const canStart =
+                      game.status === "NEXT" && game.playOrder === 1;
+                    const canReorder = game.status === "NEXT";
                     const canCallNumber = game.status === "PLAYING";
 
                     return (
@@ -335,17 +441,57 @@ export function GamesManagement() {
                         </TableCell>
                         <TableCell>
                           <div className="min-w-[180px]">
-                            <div className="font-medium">{game.name}</div>
+                            <div className="font-medium">
+                              {game.gameRule?.name ?? game.name}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               {game.registeredCartelasCount.toLocaleString()} registrations
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{game.gameType}</Badge>
-                        </TableCell>
-                        <TableCell>
                           <AdminStatusBadge status={game.status} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="font-medium">
+                              {game.status === "NEXT"
+                                ? (game.playOrder ?? "-")
+                                : "-"}
+                            </span>
+                            {canReorder ? (
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={queueMoveMutation.isPending}
+                                  onClick={() =>
+                                    queueMoveMutation.mutate({
+                                      gameId: game.id,
+                                      direction: "up",
+                                    })
+                                  }
+                                >
+                                  <ArrowUp className="size-3.5" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={queueMoveMutation.isPending}
+                                  onClick={() =>
+                                    queueMoveMutation.mutate({
+                                      gameId: game.id,
+                                      direction: "down",
+                                    })
+                                  }
+                                >
+                                  <ArrowDown className="size-3.5" />
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {formatCurrency(game.entryFee)}
@@ -353,7 +499,6 @@ export function GamesManagement() {
                         <TableCell className="text-right font-medium">
                           {formatCurrency(game.prizeAmount)}
                         </TableCell>
-                        <TableCell>{formatDateTime(game.startsAt)}</TableCell>
                         <TableCell>{formatDateTime(game.createdAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -388,7 +533,7 @@ export function GamesManagement() {
                               }}
                             >
                               <Play className="size-4" />
-                              Start
+                              Start next
                             </Button>
                             <Button
                               variant="secondary"
@@ -396,6 +541,7 @@ export function GamesManagement() {
                               disabled={!canCallNumber}
                               onClick={() => {
                                 setCallNumberError(null);
+                                setIsAutoCalling(false);
                                 setCallNumberTarget(game);
                                 setCallNumberForm({ letter: "B", number: 1 });
                               }}
@@ -432,59 +578,31 @@ export function GamesManagement() {
           <DialogHeader>
             <DialogTitle>Create game</DialogTitle>
             <DialogDescription>
-              Set up the game basics now. The backend will generate the unique
-              game code automatically.
+              Create a NEXT game round. It will be added to the end of the queue
+              automatically with the next order number.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor="game-name">Game name</Label>
-              <Input
-                id="game-name"
-                placeholder="Evening Bingo"
-                value={createForm.name}
-                onChange={(event) =>
-                  setCreateForm((current) => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-              />
-            </div>
             <div className="space-y-2">
-              <Label>Game type</Label>
+              <Label>Game rule</Label>
               <Select
-                value={createForm.gameType}
+                value={createForm.gameRuleId || undefined}
                 onValueChange={(value) =>
-                  setCreateForm((current) => ({ ...current, gameType: value }))
+                  setCreateForm((current) => ({ ...current, gameRuleId: value }))
                 }
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select game type" />
+                  <SelectValue placeholder="Select game rule" />
                 </SelectTrigger>
                 <SelectContent>
-                  {gameTypeOptions.map((gameType) => (
-                    <SelectItem key={gameType} value={gameType}>
-                      {gameType}
+                  {gameRules.map((gameRule) => (
+                    <SelectItem key={gameRule.id} value={gameRule.id}>
+                      {gameRule.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="starts-at">Starts at</Label>
-              <Input
-                id="starts-at"
-                type="datetime-local"
-                value={createForm.startsAt}
-                onChange={(event) =>
-                  setCreateForm((current) => ({
-                    ...current,
-                    startsAt: event.target.value,
-                  }))
-                }
-              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="entry-fee">Entry fee</Label>
@@ -632,7 +750,7 @@ export function GamesManagement() {
         title="Start game"
         description={
           startTarget
-            ? `Start ${startTarget.code} - ${startTarget.name}. The game will move from CHECKING to PLAYING and become ready for called numbers.`
+            ? `Start ${startTarget.code} - ${startTarget.name}. This is order 1 in the queue. The next queued game will move up automatically.`
             : "Start this game."
         }
         confirmLabel="Start game"
@@ -651,61 +769,147 @@ export function GamesManagement() {
         open={Boolean(callNumberTarget)}
         onOpenChange={(open) => {
           if (!open) {
-            setCallNumberTarget(null);
-            setCallNumberForm({ letter: "B", number: 1 });
-            setCallNumberError(null);
+            closeCallNumberDialog();
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Call number</DialogTitle>
             <DialogDescription>
               {callNumberTarget
-                ? `Record the next called number for ${callNumberTarget.code}. The backend will assign the correct order automatically.`
+                ? `Call random Bingo numbers for ${callNumberTarget.code}. Keep this modal open during the game and close it only when you are done.`
                 : "Record the next called number."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 sm:grid-cols-[140px_1fr]">
-            <div className="space-y-2">
-              <Label>Letter</Label>
-              <Select
-                value={callNumberForm.letter}
-                onValueChange={(value) =>
-                  setCallNumberForm((current) => ({
-                    ...current,
-                    letter: value,
-                  }))
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Letter" />
-                </SelectTrigger>
-                <SelectContent>
-                  {callLetterOptions.map((letter) => (
-                    <SelectItem key={letter} value={letter}>
-                      {letter}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+              <div className="rounded-2xl border bg-muted/30 p-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Latest called number
+                </div>
+                <div className="mt-2 text-3xl font-semibold tracking-tight">
+                  {latestModalCalledNumber
+                    ? `${latestModalCalledNumber.letter}-${latestModalCalledNumber.number}`
+                    : "None yet"}
+                </div>
+                <div className="mt-3 text-xs text-muted-foreground">
+                  {modalCalledNumbers.length.toLocaleString()} of 75 numbers called
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {remainingCallNumbers.length.toLocaleString()} remaining
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-[140px_1fr]">
+                  <div className="space-y-2">
+                    <Label>Letter</Label>
+                    <Input value={callNumberForm.letter} readOnly />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="called-number">Number</Label>
+                    <Input
+                      id="called-number"
+                      type="number"
+                      min={1}
+                      max={75}
+                      value={String(callNumberForm.number)}
+                      onChange={(event) =>
+                        setCallNumberForm(
+                          toCalledNumberPayload(Number(event.target.value)),
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const nextCall = getRandomCallNumber(remainingCallNumbers);
+
+                      if (!nextCall) {
+                        setCallNumberError(
+                          "All 75 numbers have already been called for this game.",
+                        );
+                        return;
+                      }
+
+                      setCallNumberError(null);
+                      setCallNumberForm(nextCall);
+                    }}
+                    disabled={
+                      remainingCallNumbers.length === 0 || callNumberMutation.isPending
+                    }
+                  >
+                    <Target className="size-4" />
+                    Pick random
+                  </Button>
+                  <Button
+                    variant={isAutoCalling ? "destructive" : "secondary"}
+                    onClick={() => {
+                      if (isAutoCalling) {
+                        setIsAutoCalling(false);
+                        return;
+                      }
+
+                      if (remainingCallNumbers.length === 0) {
+                        setCallNumberError(
+                          "All 75 numbers have already been called for this game.",
+                        );
+                        return;
+                      }
+
+                      setCallNumberError(null);
+                      setIsAutoCalling(true);
+                    }}
+                    disabled={callNumberMutation.isPending}
+                  >
+                    <Radio className="size-4" />
+                    {isAutoCalling ? "Stop auto call" : "Start auto call every 7s"}
+                  </Button>
+                </div>
+
+                <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                  Auto call picks a random remaining number from the full Bingo pool.
+                  The matching letter is based on the real Bingo ranges: B 1-15,
+                  I 16-30, N 31-45, G 46-60, O 61-75.
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="called-number">Number</Label>
-              <Input
-                id="called-number"
-                type="number"
-                min={1}
-                max={75}
-                value={String(callNumberForm.number)}
-                onChange={(event) =>
-                  setCallNumberForm((current) => ({
-                    ...current,
-                    number: Number(event.target.value),
-                  }))
-                }
-              />
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label>Called numbers</Label>
+                <Badge variant="outline">
+                  {modalCalledNumbers.length.toLocaleString()} recorded
+                </Badge>
+              </div>
+              {modalCalledNumbersQuery.isLoading ? (
+                <AdminTableSkeleton columns={1} rows={3} />
+              ) : modalCalledNumbers.length === 0 ? (
+                <AdminEmptyState
+                  title="No called numbers yet"
+                  description="Start calling numbers manually or turn on the 7 second auto caller."
+                />
+              ) : (
+                <div className="max-h-48 overflow-y-auto rounded-xl border border-border/60 p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {modalCalledNumbers.map((calledNumber) => (
+                      <Badge
+                        key={calledNumber.id}
+                        variant="outline"
+                        className="px-3 py-1 text-xs"
+                      >
+                        #{calledNumber.order} {calledNumber.letter}-{calledNumber.number}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -718,10 +922,9 @@ export function GamesManagement() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setCallNumberTarget(null)}
-              disabled={callNumberMutation.isPending}
+              onClick={closeCallNumberDialog}
             >
-              Cancel
+              Close
             </Button>
             <Button
               onClick={() => {
@@ -731,10 +934,11 @@ export function GamesManagement() {
 
                 callNumberMutation.mutate({
                   gameId: callNumberTarget.id,
-                  payload: callNumberForm,
+                  payload: toCalledNumberPayload(callNumberForm.number),
                 });
               }}
               disabled={
+                isAutoCalling ||
                 callNumberMutation.isPending ||
                 !isValidCalledNumber(callNumberForm.number)
               }
@@ -789,14 +993,24 @@ export function GamesManagement() {
                   <CardHeader>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <CardTitle>{gameDetailQuery.data.name}</CardTitle>
+                        <CardTitle>
+                          {gameDetailQuery.data.gameRule?.name ??
+                            gameDetailQuery.data.name}
+                        </CardTitle>
                         <CardDescription>{gameDetailQuery.data.code}</CardDescription>
                       </div>
                       <AdminStatusBadge status={gameDetailQuery.data.status} />
                     </div>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
-                    <DetailItem label="Game type" value={gameDetailQuery.data.gameType} />
+                    <DetailItem
+                      label="Game rule"
+                      value={gameDetailQuery.data.gameRule?.name ?? gameDetailQuery.data.name}
+                    />
+                    <DetailItem
+                      label="Rule key"
+                      value={gameDetailQuery.data.gameRule?.key ?? gameDetailQuery.data.gameType}
+                    />
                     <DetailItem
                       label="Registrations"
                       value={gameDetailQuery.data.registeredCartelasCount.toLocaleString()}
@@ -810,8 +1024,8 @@ export function GamesManagement() {
                       value={formatCurrency(gameDetailQuery.data.prizeAmount)}
                     />
                     <DetailItem
-                      label="Starts at"
-                      value={formatDateTime(gameDetailQuery.data.startsAt)}
+                      label="Play order"
+                      value={gameDetailQuery.data.playOrder ?? "-"}
                     />
                     <DetailItem
                       label="Created at"
@@ -824,14 +1038,10 @@ export function GamesManagement() {
                   <CardHeader>
                     <CardTitle>Live progress</CardTitle>
                     <CardDescription>
-                      Useful checkpoints for monitoring start and finish state.
+                      Simple checkpoints for the current round and final result.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
-                    <DetailItem
-                      label="Started at"
-                      value={formatDateTime(gameDetailQuery.data.startedAt)}
-                    />
                     <DetailItem
                       label="Finished at"
                       value={formatDateTime(gameDetailQuery.data.finishedAt)}
@@ -924,20 +1134,60 @@ async function invalidateGameQueries(
   ]);
 }
 
+function toCalledNumberPayload(number: number): CallNumberPayload {
+  return {
+    letter: getLetterForNumber(number),
+    number,
+  };
+}
+
+function getLetterForNumber(number: number): CallNumberPayload["letter"] {
+  if (number >= 1 && number <= 15) {
+    return "B";
+  }
+
+  if (number >= 16 && number <= 30) {
+    return "I";
+  }
+
+  if (number >= 31 && number <= 45) {
+    return "N";
+  }
+
+  if (number >= 46 && number <= 60) {
+    return "G";
+  }
+
+  return "O";
+}
+
+function getRemainingCallNumbers(calledNumbers: Array<{ number: number }>) {
+  const usedNumbers = new Set(calledNumbers.map((calledNumber) => calledNumber.number));
+
+  return Array.from({ length: 75 }, (_, index) => index + 1).filter(
+    (number) => !usedNumbers.has(number),
+  );
+}
+
+function getRandomCallNumber(remainingNumbers: number[]) {
+  if (remainingNumbers.length === 0) {
+    return null;
+  }
+
+  const nextNumber =
+    remainingNumbers[Math.floor(Math.random() * remainingNumbers.length)];
+
+  return toCalledNumberPayload(nextNumber);
+}
+
 function canCreateGame(form: CreateGameFormState) {
   return (
-    form.name.trim().length > 0 &&
-    form.gameType.trim().length > 0 &&
+    form.gameRuleId.trim().length > 0 &&
     form.entryFee.trim().length > 0 &&
-    form.prizeAmount.trim().length > 0 &&
-    form.startsAt.trim().length > 0
+    form.prizeAmount.trim().length > 0
   );
 }
 
 function isValidCalledNumber(value: number) {
   return Number.isInteger(value) && value >= 1 && value <= 75;
-}
-
-function toIsoDateTime(value: string) {
-  return new Date(value).toISOString();
 }
