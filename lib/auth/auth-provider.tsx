@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -16,6 +17,7 @@ import {
   getStoredSession,
   setStoredSession,
 } from "@/lib/auth/storage";
+import { socketService } from "@/lib/socket/socket-service";
 
 interface AuthContextValue {
   isHydrated: boolean;
@@ -43,10 +45,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     clearStoredSession();
     setSession(null);
+    socketService.disconnect();
     if (typeof window !== "undefined") {
       window.location.href = "/login";
     }
   }, []);
+
+  useEffect(() => {
+    if (session?.accessToken && typeof window !== "undefined") {
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002";
+      socketService.connect(apiBaseUrl, session.accessToken);
+    }
+
+    return () => {
+      if (!session) {
+        socketService.disconnect();
+      }
+    };
+  }, [session]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

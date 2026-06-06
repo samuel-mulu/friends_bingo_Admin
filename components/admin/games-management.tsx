@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   QueryClient,
   useMutation,
@@ -38,15 +32,12 @@ import {
   reorderAdminSlots,
   startAdminGame,
   updateAdminGameStatus,
+  updateAdminSlotEntryFee,
 } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import type {
-  AdminGame,
-  CallNumberPayload,
-  GameStatus,
-} from "@/lib/api/types";
-import { formatCurrency, formatDateTime } from "@/lib/formatters";
-import { ActionDialog } from "@/components/admin/action-dialog";
+import type { AdminGame, CallNumberPayload, GameStatus } from "@/lib/api/types";
+import { formatCurrency } from "@/lib/formatters";
+import { socketService } from "@/lib/socket/socket-service";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
 import { AdminTableSkeleton } from "@/components/admin/admin-table-skeleton";
@@ -98,8 +89,10 @@ import {
 } from "@/components/ui/table";
 
 const pageSize = 20;
+const PRIZE_PER_CARTELA = "8";
 const gamesQueryKey = (page: number) => ["admin", "games", page] as const;
-const gameDetailQueryKey = (gameId: string) => ["admin", "games", "detail", gameId] as const;
+const gameDetailQueryKey = (gameId: string) =>
+  ["admin", "games", "detail", gameId] as const;
 const calledNumbersQueryKey = (gameId: string) =>
   ["admin", "games", "called-numbers", gameId] as const;
 
@@ -125,16 +118,21 @@ export function GamesManagement() {
   const [page, setPage] = useState(1);
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] =
-    useState<CreateGameFormState>(initialCreateGameForm);
+  const [createForm, setCreateForm] = useState<CreateGameFormState>(
+    initialCreateGameForm,
+  );
   const [createError, setCreateError] = useState<string | null>(null);
   const [statusTarget, setStatusTarget] = useState<AdminGame | null>(null);
   const [statusValue, setStatusValue] = useState<GameStatus | "">("");
   const [statusError, setStatusError] = useState<string | null>(null);
   const [startTarget, setStartTarget] = useState<AdminGame | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
-  const [blockingSessionId, setBlockingSessionId] = useState<string | null>(null);
-  const [callNumberTarget, setCallNumberTarget] = useState<AdminGame | null>(null);
+  const [blockingSessionId, setBlockingSessionId] = useState<string | null>(
+    null,
+  );
+  const [callNumberTarget, setCallNumberTarget] = useState<AdminGame | null>(
+    null,
+  );
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [callNumberForm, setCallNumberForm] = useState<CallNumberPayload>({
     letter: "B",
@@ -142,10 +140,15 @@ export function GamesManagement() {
   });
   const [callNumberError, setCallNumberError] = useState<string | null>(null);
   const [isAutoCalling, setIsAutoCalling] = useState(false);
+  const [autoCallingGameId, setAutoCallingGameId] = useState<string | null>(null);
+  const [entryFeeDrafts, setEntryFeeDrafts] = useState<Record<string, string>>(
+    {},
+  );
 
   const gamesQuery = useQuery({
     queryKey: gamesQueryKey(page),
     queryFn: () => getAdminGames(page, pageSize),
+    refetchInterval: 5000,
   });
 
   const gameRulesQuery = useQuery({
@@ -159,6 +162,7 @@ export function GamesManagement() {
       : ["admin", "games", "detail"],
     queryFn: () => getGameDetail(selectedGameId as string),
     enabled: Boolean(selectedGameId),
+    refetchInterval: selectedGameId ? 5000 : false,
   });
 
   const calledNumbersQuery = useQuery({
@@ -167,16 +171,68 @@ export function GamesManagement() {
       : ["admin", "games", "called-numbers"],
     queryFn: () => getGameCalledNumbers(activeSessionId as string),
     enabled: Boolean(activeSessionId),
+    refetchInterval: activeSessionId ? 5000 : false,
   });
 
   const modalCalledNumbersQuery = useQuery({
-    queryKey: callNumberTarget
-      ? calledNumbersQueryKey(callNumberTarget.id)
+    queryKey: activeSessionId
+      ? calledNumbersQueryKey(activeSessionId)
       : ["admin", "games", "called-numbers", "modal"],
     queryFn: () => getGameCalledNumbers(activeSessionId as string),
     enabled: Boolean(callNumberTarget) && Boolean(activeSessionId),
-    refetchInterval: isAutoCalling ? 3000 : false,
+    refetchInterval: callNumberTarget ? 3000 : false,
   });
+
+  useEffect(() => {
+    const handleGameOperationUpdate = (data: unknown) => {
+      // Optimistic update: merge the normalized slot data into the current cache
+      const slot = data as AdminGame | null;
+      if (slot?.id) {
+        queryClient.setQueryData<{ items: AdminGame[]; pagination: unknown }>(
+          gamesQueryKey(page),
+          (old) => {
+            if (!old) return old;
+            const items = old.items.map((item) =>
+              item.id === slot.id ? { ...item, ...slot } : item,
+            );
+            return { ...old, items };
+          },
+        );
+      }
+      // Also invalidate to ensure consistency with server state
+      queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    };
+
+    const handleSlotCreated = () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    };
+
+    const handleGameStatusChanged = () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    };
+
+    const handleGameFinished = () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    };
+
+    const handleSessionPrizeUpdated = () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    };
+
+    socketService.on("game:operation_updated", handleGameOperationUpdate);
+    socketService.on("slot:created", handleSlotCreated);
+    socketService.on("game:status_changed", handleGameStatusChanged);
+    socketService.on("game:finished", handleGameFinished);
+    socketService.on("session:prize_updated", handleSessionPrizeUpdated);
+
+    return () => {
+      socketService.off("game:operation_updated", handleGameOperationUpdate);
+      socketService.off("slot:created", handleSlotCreated);
+      socketService.off("game:status_changed", handleGameStatusChanged);
+      socketService.off("game:finished", handleGameFinished);
+      socketService.off("session:prize_updated", handleSessionPrizeUpdated);
+    };
+  }, [queryClient, page]);
 
   const createGameMutation = useMutation({
     mutationFn: () =>
@@ -190,18 +246,15 @@ export function GamesManagement() {
       await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
     onError: (error) => {
-      setCreateError(getApiErrorMessage(error, "The game could not be created."));
+      setCreateError(
+        getApiErrorMessage(error, "The game could not be created."),
+      );
     },
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({
-      gameId,
-      status,
-    }: {
-      gameId: string;
-      status: GameStatus;
-    }) => updateAdminGameStatus(gameId, { status }),
+    mutationFn: ({ gameId, status }: { gameId: string; status: GameStatus }) =>
+      updateAdminGameStatus(gameId, { status }),
     onSuccess: async (_, variables) => {
       setStatusTarget(null);
       setStatusValue("");
@@ -242,10 +295,27 @@ export function GamesManagement() {
     },
   });
 
-  const startMutation = useMutation({
-    mutationFn: ({ gameId, entryFee }: { gameId: string; entryFee?: string }) =>
-      startAdminGame(gameId, entryFee),
+  const updateEntryFeeMutation = useMutation({
+    mutationFn: ({
+      gameId,
+      entryFee,
+    }: {
+      gameId: string;
+      entryFee: string;
+    }) => updateAdminSlotEntryFee(gameId, entryFee),
     onSuccess: async (_, { gameId }) => {
+      setEntryFeeDrafts((current) => {
+        const next = { ...current };
+        delete next[gameId];
+        return next;
+      });
+      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
+    },
+  });
+
+  const startMutation = useMutation({
+    mutationFn: (gameId: string) => startAdminGame(gameId),
+    onSuccess: async (_, gameId) => {
       setStartTarget(null);
       setStartError(null);
       setBlockingSessionId(null);
@@ -272,7 +342,9 @@ export function GamesManagement() {
       await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
     onError: (error) => {
-      setStartError(getApiErrorMessage(error, "Could not cancel the blocking session."));
+      setStartError(
+        getApiErrorMessage(error, "Could not cancel the blocking session."),
+      );
     },
   });
 
@@ -299,8 +371,28 @@ export function GamesManagement() {
     },
   });
 
-  const summary = useMemo(() => {
+  const operationalGames = useMemo(() => {
     const items = gamesQuery.data?.items ?? [];
+    const statusOrder: Record<GameStatus, number> = {
+      PLAYING: 0,
+      CHECKING: 1,
+      NEXT: 2,
+      FINISHED: 3,
+      CANCELLED: 4,
+    };
+
+    return [...items].sort((left, right) => {
+      const statusDiff = statusOrder[left.status] - statusOrder[right.status];
+      if (statusDiff !== 0) {
+        return statusDiff;
+      }
+
+      return (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+    });
+  }, [gamesQuery.data?.items]);
+
+  const summary = useMemo(() => {
+    const items = operationalGames;
     const queuedGames = items
       .filter((game) => game.status === "NEXT")
       .sort(
@@ -315,35 +407,50 @@ export function GamesManagement() {
       queued: queuedGames.length,
       nextUp: queuedGames[0] ?? null,
     };
-  }, [gamesQuery.data?.items]);
+  }, [operationalGames]);
 
   const calledNumbers = calledNumbersQuery.data?.calledNumbers ?? [];
   const latestCalledNumber = calledNumbers.at(-1) ?? null;
   const modalCalledNumbers = modalCalledNumbersQuery.data?.calledNumbers ?? [];
   const latestModalCalledNumber = modalCalledNumbers.at(-1) ?? null;
-  const gameRules = useMemo(() => gameRulesQuery.data ?? [], [gameRulesQuery.data]);
+  const gameRules = useMemo(
+    () => gameRulesQuery.data ?? [],
+    [gameRulesQuery.data],
+  );
   const defaultGameRuleId = useMemo(
-    () => (gameRules.find((rule) => rule.key === "MANUAL") ?? gameRules[0])?.id ?? "",
+    () =>
+      (gameRules.find((rule) => rule.key === "MANUAL") ?? gameRules[0])?.id ??
+      "",
     [gameRules],
   );
-  const remainingCallNumbers = getRemainingCallNumbers(modalCalledNumbers);
+  const remainingCallNumbers = getRemainingCallNumbers(calledNumbers);
   const autoCallActive = isAutoCalling && remainingCallNumbers.length > 0;
   const closeCallNumberDialog = () => {
-    setIsAutoCalling(false);
+    // Do NOT stop auto-call when closing modal — auto-call continues in background
     setCallNumberTarget(null);
     setCallNumberForm({ letter: "B", number: 1 });
     setCallNumberError(null);
   };
 
-  useEffect(() => {
-    if (!callNumberTarget && autoCallTimerRef.current) {
-      window.clearTimeout(autoCallTimerRef.current);
-      autoCallTimerRef.current = null;
-    }
-  }, [callNumberTarget]);
+  const stopAutoCall = () => {
+    setIsAutoCalling(false);
+    setAutoCallingGameId(null);
+  };
 
   useEffect(() => {
-    if (!autoCallActive || !callNumberTarget) {
+    if (!selectedGameId) {
+      setActiveSessionId(null);
+      return;
+    }
+
+    const sessionId = gameDetailQuery.data?.sessionId ?? null;
+    setActiveSessionId(sessionId);
+  }, [gameDetailQuery.data?.sessionId, selectedGameId]);
+
+  // Auto-call timer: runs independently of callNumberTarget
+  // Auto-call continues in background even after modal is closed
+  useEffect(() => {
+    if (!autoCallActive || !activeSessionId) {
       if (autoCallTimerRef.current) {
         window.clearTimeout(autoCallTimerRef.current);
         autoCallTimerRef.current = null;
@@ -358,13 +465,15 @@ export function GamesManagement() {
         return;
       }
 
-      setCallNumberForm(nextCall);
-      if (activeSessionId) {
-        callNumberMutation.mutate({
-          sessionId: activeSessionId,
-          payload: nextCall,
-        });
+      // Only update the form if the modal is open
+      if (callNumberTarget) {
+        setCallNumberForm(nextCall);
       }
+
+      callNumberMutation.mutate({
+        sessionId: activeSessionId,
+        payload: nextCall,
+      });
     }, 7000);
 
     return () => {
@@ -375,16 +484,47 @@ export function GamesManagement() {
     };
   }, [
     autoCallActive,
+    activeSessionId,
     callNumberMutation,
-    callNumberTarget,
     remainingCallNumbers,
+    callNumberTarget,
   ]);
+
+  // Track the game being auto-called so the table shows a stop button
+  useEffect(() => {
+    if (isAutoCalling && callNumberTarget) {
+      setAutoCallingGameId(callNumberTarget.id);
+    } else if (!isAutoCalling) {
+      setAutoCallingGameId(null);
+    }
+  }, [isAutoCalling, callNumberTarget]);
+
+  // Refresh called numbers periodically even when modal is closed
+  // Uses a background query that runs when auto-call is active but modal is closed
+  const backgroundCalledNumbersQuery = useQuery({
+    queryKey: activeSessionId
+      ? ["admin", "games", "called-numbers", "background", activeSessionId]
+      : ["admin", "games", "called-numbers", "background"],
+    queryFn: () => getGameCalledNumbers(activeSessionId as string),
+    enabled: isAutoCalling && Boolean(activeSessionId) && !callNumberTarget,
+    refetchInterval: isAutoCalling ? 4000 : false,
+  });
+
+  // Use background query results when modal is closed but auto-call is active
+  const backgroundCalledNumbersResult =
+    backgroundCalledNumbersQuery.data?.calledNumbers ?? [];
+  const effectiveCalledNumbers = callNumberTarget
+    ? modalCalledNumbers
+    : isAutoCalling
+    ? backgroundCalledNumbersResult
+    : calledNumbers;
+  const latestEffectiveCalledNumber = effectiveCalledNumbers.at(-1) ?? null;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Games"
-        description="Create games into a numbered queue. Order 1 is always the current NEXT round. When it starts, the queue shifts up automatically."
+        description="Run today's bingo rounds: queue games, start the next slot, call numbers, and finish or cancel active sessions."
       />
 
       <Card>
@@ -393,8 +533,8 @@ export function GamesManagement() {
             <div className="space-y-1">
               <CardTitle>Game operations</CardTitle>
               <CardDescription>
-                New games join the end of the queue. Only order 1 can be
-                started. Finished or cancelled games leave the queue.
+                Only active rounds appear here. Finished and cancelled games
+                leave this view automatically.
               </CardDescription>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -441,57 +581,124 @@ export function GamesManagement() {
               )}
               onRetry={() => gamesQuery.refetch()}
             />
-          ) : !gamesQuery.data || gamesQuery.data.items.length === 0 ? (
+          ) : operationalGames.length === 0 ? (
             <AdminEmptyState
-              title="No games created yet"
-              description="Create the first bingo game to open the operations workflow."
+              title="No active games"
+              description="Create a game to add it to today's queue."
             />
           ) : (
             <>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Code</TableHead>
+                    <TableHead>Slot</TableHead>
                     <TableHead>Rule</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Order</TableHead>
-                    <TableHead>Created</TableHead>
+                    <TableHead>Entry fee</TableHead>
+                    <TableHead>Prize</TableHead>
+                    <TableHead>Players</TableHead>
+                    <TableHead>Called</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {gamesQuery.data.items.map((game) => {
+                  {operationalGames.map((game) => {
                     const nextStatuses = statusTransitionOptions[game.status];
                     const canStart =
                       game.status === "NEXT" && game.sortOrder === 1;
                     const canReorder = game.status === "NEXT";
                     const canCallNumber = game.status === "PLAYING";
+                    const canEditEntryFee = game.status === "NEXT";
+                    const entryFeeValue = canEditEntryFee
+                      ? (entryFeeDrafts[game.id] ?? game.entryFee)
+                      : game.entryFee;
 
                     return (
                       <TableRow key={game.id}>
                         <TableCell>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {game.staticCode}
-                          </span>
+                          <div className="min-w-[100px]">
+                            <div className="font-mono text-sm font-medium">
+                              {game.staticCode}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Order {game.sortOrder ?? "-"}
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
-                          <div className="min-w-[180px]">
-                            <div className="font-medium">
-                              {game.gameRule?.name ?? game.name}
-                            </div>
-                            
+                          <div className="min-w-[140px] font-medium">
+                            {game.gameRule?.name ?? game.name}
                           </div>
                         </TableCell>
                         <TableCell>
                           <AdminStatusBadge status={game.status} />
                         </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span className="font-medium">
-                              {game.status === "NEXT"
-                                ? (game.sortOrder ?? "-")
-                                : "-"}
+                        <TableCell>
+                          {canEditEntryFee ? (
+                            <Input
+                              className="h-8 w-24"
+                              value={entryFeeValue}
+                              disabled={updateEntryFeeMutation.isPending}
+                              onChange={(event) =>
+                                setEntryFeeDrafts((current) => ({
+                                  ...current,
+                                  [game.id]: event.target.value,
+                                }))
+                              }
+                              onBlur={() => {
+                                const nextValue = entryFeeDrafts[game.id];
+                                if (
+                                  !nextValue ||
+                                  nextValue === game.entryFee ||
+                                  !isValidEntryFee(nextValue)
+                                ) {
+                                  if (nextValue && !isValidEntryFee(nextValue)) {
+                                    setEntryFeeDrafts((current) => {
+                                      const draft = { ...current };
+                                      delete draft[game.id];
+                                      return draft;
+                                    });
+                                  }
+                                  return;
+                                }
+
+                                updateEntryFeeMutation.mutate({
+                                  gameId: game.id,
+                                  entryFee: nextValue,
+                                });
+                              }}
+                            />
+                          ) : (
+                            <span className="text-sm">
+                              {formatCurrency(game.entryFee)}
                             </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {formatCurrency(game.prizeAmount)}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {game.registeredCartelasCount}
+                          </span>
+                        </TableCell>
+                      <TableCell>
+                        <span className="text-sm">
+                          {game.calledNumbersCount}
+                        </span>
+                        {autoCallingGameId === game.id ? (
+                          <Badge
+                            variant="default"
+                            className="ml-1 animate-pulse bg-destructive text-destructive-foreground text-xs"
+                          >
+                            Auto
+                          </Badge>
+                        ) : null}
+                      </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
                             {canReorder ? (
                               <div className="flex gap-1">
                                 <Button
@@ -524,12 +731,6 @@ export function GamesManagement() {
                                 </Button>
                               </div>
                             ) : null}
-                          </div>
-                        </TableCell>
-                        
-                        <TableCell>{formatDateTime(game.createdAt)}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
                             <Button
                               variant="outline"
                               size="sm"
@@ -561,7 +762,7 @@ export function GamesManagement() {
                               }}
                             >
                               <Play className="size-4" />
-                              Start next
+                              Start
                             </Button>
                             <Button
                               variant="secondary"
@@ -572,6 +773,10 @@ export function GamesManagement() {
                                 setIsAutoCalling(false);
                                 setCallNumberTarget(game); // open modal regardless
                                 setCallNumberForm({ letter: "B", number: 1 });
+                                if (game.sessionId) {
+                                  setActiveSessionId(game.sessionId);
+                                  return;
+                                }
                                 try {
                                   const live = await getCurrentLiveSession();
                                   const sid = extractLiveSessionId(live);
@@ -600,7 +805,7 @@ export function GamesManagement() {
                 </TableBody>
               </Table>
               <AdminPagination
-                pagination={gamesQuery.data.pagination}
+                pagination={gamesQuery.data!.pagination}
                 onPageChange={setPage}
               />
             </>
@@ -621,8 +826,8 @@ export function GamesManagement() {
           <DialogHeader>
             <DialogTitle>Create game</DialogTitle>
             <DialogDescription>
-              Create a NEXT game round from a rule. It will be added to the end of the queue
-              automatically with the next order number.
+              Create a NEXT game round from a rule. It will be added to the end
+              of the queue automatically with the next order number.
             </DialogDescription>
           </DialogHeader>
 
@@ -632,7 +837,10 @@ export function GamesManagement() {
               <Select
                 value={createForm.gameRuleId || undefined}
                 onValueChange={(value) =>
-                  setCreateForm((current) => ({ ...current, gameRuleId: value }))
+                  setCreateForm((current) => ({
+                    ...current,
+                    gameRuleId: value,
+                  }))
                 }
               >
                 <SelectTrigger className="w-full">
@@ -666,7 +874,9 @@ export function GamesManagement() {
             </Button>
             <Button
               onClick={() => createGameMutation.mutate()}
-              disabled={createGameMutation.isPending || !canCreateGame(createForm)}
+              disabled={
+                createGameMutation.isPending || !canCreateGame(createForm)
+              }
             >
               <Save className="size-4" />
               Create game
@@ -750,7 +960,7 @@ export function GamesManagement() {
         </DialogContent>
       </Dialog>
 
-      <ActionDialog
+      <Dialog
         open={Boolean(startTarget)}
         onOpenChange={(open) => {
           if (!open) {
@@ -758,43 +968,103 @@ export function GamesManagement() {
             setStartError(null);
           }
         }}
-        title="Start game"
-        description={
-          startTarget
-            ? `Start ${startTarget.staticCode} - ${startTarget.name}. This is order 1 in the queue. The next queued game will move up automatically.`
-            : "Start this game."
-        }
-        confirmLabel="Start game"
-        field={{ label: "Entry fee (default 10)", placeholder: "10", defaultValue: "10" }}
-        errorMessage={
-          startTarget
-            ? blockingSessionId
-              ? `${startError ?? "Another session is blocking."} Click 'Cancel blocking session' below to clear it, then try again.`
-              : startError
-            : null
-        }
-        extraContent={
-          blockingSessionId ? (
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={cancelBlockingMutation.isPending}
-              onClick={() => cancelBlockingMutation.mutate(blockingSessionId)}
-            >
-              {cancelBlockingMutation.isPending ? "Cancelling..." : "Cancel blocking session"}
-            </Button>
-          ) : undefined
-        }
-        onConfirm={(value) => {
-          if (!startTarget) {
-            return;
-          }
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Start game</DialogTitle>
+            <DialogDescription>
+              {startTarget
+                ? `Confirm starting ${startTarget.staticCode}. Entry fee is already set in the table.`
+                : "Start this game."}
+            </DialogDescription>
+          </DialogHeader>
 
-          const entryFee = (value ?? "").trim() || undefined;
-          startMutation.mutate({ gameId: startTarget.id, entryFee });
-        }}
-        isPending={startMutation.isPending}
-      />
+          {startTarget ? (
+            <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-4 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Entry fee</span>
+                <span className="font-medium">
+                  {formatCurrency(startTarget.entryFee)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Registered</span>
+                <span className="font-medium">
+                  {startTarget.registeredCartelasCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Prize pool</span>
+                <span className="font-medium">
+                  {formatCurrency(startTarget.prizeAmount)}
+                </span>
+              </div>
+              <p className="text-muted-foreground">
+                Prize pool increases by {PRIZE_PER_CARTELA} ETB per registered
+                cartela once the round is live.
+              </p>
+            </div>
+          ) : null}
+
+          {startTarget ? (
+            blockingSessionId ? (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {(startError ?? "Another session is blocking.") +
+                  " Click 'Cancel blocking session' below to clear it, then try again."}
+              </div>
+            ) : startError ? (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {startError}
+              </div>
+            ) : null
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            {blockingSessionId ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={cancelBlockingMutation.isPending}
+                onClick={() => cancelBlockingMutation.mutate(blockingSessionId)}
+              >
+                {cancelBlockingMutation.isPending
+                  ? "Cancelling..."
+                  : "Cancel blocking session"}
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStartTarget(null);
+                  setStartError(null);
+                }}
+                disabled={startMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!startTarget || !isValidEntryFee(startTarget.entryFee)) {
+                    return;
+                  }
+
+                  startMutation.mutate(startTarget.id);
+                }}
+                disabled={
+                  startMutation.isPending ||
+                  !startTarget ||
+                  !isValidEntryFee(startTarget.entryFee)
+                }
+              >
+                Start game
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(callNumberTarget)}
@@ -826,7 +1096,8 @@ export function GamesManagement() {
                     : "None yet"}
                 </div>
                 <div className="mt-3 text-xs text-muted-foreground">
-                  {modalCalledNumbers.length.toLocaleString()} of 75 numbers called
+                  {modalCalledNumbers.length.toLocaleString()} of 75 numbers
+                  called
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {remainingCallNumbers.length.toLocaleString()} remaining
@@ -860,7 +1131,8 @@ export function GamesManagement() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      const nextCall = getRandomCallNumber(remainingCallNumbers);
+                      const nextCall =
+                        getRandomCallNumber(remainingCallNumbers);
 
                       if (!nextCall) {
                         setCallNumberError(
@@ -873,7 +1145,8 @@ export function GamesManagement() {
                       setCallNumberForm(nextCall);
                     }}
                     disabled={
-                      remainingCallNumbers.length === 0 || callNumberMutation.isPending
+                      remainingCallNumbers.length === 0 ||
+                      callNumberMutation.isPending
                     }
                   >
                     <Target className="size-4" />
@@ -900,14 +1173,16 @@ export function GamesManagement() {
                     disabled={callNumberMutation.isPending}
                   >
                     <Radio className="size-4" />
-                    {isAutoCalling ? "Stop auto call" : "Start auto call every 7s"}
+                    {isAutoCalling
+                      ? "Stop auto call"
+                      : "Start auto call every 7s"}
                   </Button>
                 </div>
 
                 <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                  Auto call picks a random remaining number from the full Bingo pool.
-                  The matching letter is based on the real Bingo ranges: B 1-15,
-                  I 16-30, N 31-45, G 46-60, O 61-75.
+                  Auto call picks a random remaining number from the full Bingo
+                  pool. The matching letter is based on the real Bingo ranges: B
+                  1-15, I 16-30, N 31-45, G 46-60, O 61-75.
                 </div>
               </div>
             </div>
@@ -935,7 +1210,8 @@ export function GamesManagement() {
                         variant="outline"
                         className="px-3 py-1 text-xs"
                       >
-                        #{calledNumber.order} {calledNumber.letter}-{calledNumber.number}
+                        #{calledNumber.order} {calledNumber.letter}-
+                        {calledNumber.number}
                       </Badge>
                     ))}
                   </div>
@@ -951,15 +1227,15 @@ export function GamesManagement() {
           ) : null}
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={closeCallNumberDialog}
-            >
+            <Button variant="outline" onClick={closeCallNumberDialog}>
               Close
             </Button>
             <Button
               onClick={() => {
-                if (!callNumberTarget || !isValidCalledNumber(callNumberForm.number)) {
+                if (
+                  !callNumberTarget ||
+                  !isValidCalledNumber(callNumberForm.number)
+                ) {
                   return;
                 }
 
@@ -1030,39 +1306,74 @@ export function GamesManagement() {
                           {gameDetailQuery.data.gameRule?.name ??
                             gameDetailQuery.data.name}
                         </CardTitle>
-                        <CardDescription>{gameDetailQuery.data.staticCode}</CardDescription>
+                        <CardDescription>
+                          {gameDetailQuery.data.staticCode}
+                        </CardDescription>
                       </div>
                       <AdminStatusBadge status={gameDetailQuery.data.status} />
                     </div>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
                     <DetailItem
-                      label="Game rule"
-                      value={gameDetailQuery.data.gameRule?.name ?? gameDetailQuery.data.name}
+                      label="Static code"
+                      value={gameDetailQuery.data.staticCode}
                     />
                     <DetailItem
-                      label="Rule key"
-                      value={gameDetailQuery.data.gameRule?.key ?? gameDetailQuery.data.gameType}
+                      label="Play code"
+                      value={
+                        gameDetailQuery.data.status === "NEXT"
+                          ? "-"
+                          : (gameDetailQuery.data.playCode ?? "-")
+                      }
                     />
                     <DetailItem
-                      label="Queue order"
-                      value={gameDetailQuery.data.sortOrder ?? "-"}
+                      label="Rule"
+                      value={
+                        gameDetailQuery.data.gameRule?.name ??
+                        gameDetailQuery.data.name
+                      }
                     />
                     <DetailItem
-                      label="Created at"
-                      value={formatDateTime(gameDetailQuery.data.createdAt)}
+                      label="Status"
+                      value={gameDetailQuery.data.status}
+                    />
+                    <DetailItem
+                      label="Entry fee"
+                      value={formatCurrency(gameDetailQuery.data.entryFee)}
+                    />
+                    <DetailItem
+                      label="Prize pool"
+                      value={formatCurrency(gameDetailQuery.data.prizeAmount)}
+                    />
+                    <DetailItem
+                      label="Registered"
+                      value={gameDetailQuery.data.registeredCartelasCount}
+                    />
+                    <DetailItem
+                      label="Called"
+                      value={gameDetailQuery.data.calledNumbersCount}
+                    />
+                    <DetailItem
+                      label="Latest call"
+                      value={
+                        latestCalledNumber
+                          ? `${latestCalledNumber.letter}-${latestCalledNumber.number}`
+                          : "-"
+                      }
+                    />
+                    <DetailItem
+                      label="Winner"
+                      value={gameDetailQuery.data.winnerCartelaId ?? "-"}
                     />
                   </CardContent>
                 </Card>
-
-                {/* Session-specific details are shown when inspecting a live session, not the slot */}
 
                 <Card size="sm">
                   <CardHeader>
                     <CardTitle>Called numbers</CardTitle>
                     <CardDescription>
-                      Ordered call history with the latest number highlighted for
-                      quick admin verification.
+                      Ordered call history with the latest number highlighted
+                      for quick admin verification.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -1090,7 +1401,8 @@ export function GamesManagement() {
                             variant="outline"
                             className="px-3 py-1 text-xs"
                           >
-                            #{calledNumber.order} {calledNumber.letter}-{calledNumber.number}
+                            #{calledNumber.order} {calledNumber.letter}-
+                            {calledNumber.number}
                           </Badge>
                         ))}
                       </div>
@@ -1106,13 +1418,7 @@ export function GamesManagement() {
   );
 }
 
-function DetailItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
+function DetailItem({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="space-y-1">
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1123,14 +1429,13 @@ function DetailItem({
   );
 }
 
-async function invalidateGameQueries(
-  queryClient: QueryClient,
-  gameId: string,
-) {
+async function invalidateGameQueries(queryClient: QueryClient, gameId: string) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["admin", "games"] }),
     queryClient.invalidateQueries({ queryKey: gameDetailQueryKey(gameId) }),
-    queryClient.invalidateQueries({ queryKey: calledNumbersQueryKey(gameId) }),
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "games", "called-numbers"],
+    }),
   ]);
 }
 
@@ -1162,7 +1467,9 @@ function getLetterForNumber(number: number): CallNumberPayload["letter"] {
 }
 
 function getRemainingCallNumbers(calledNumbers: Array<{ number: number }>) {
-  const usedNumbers = new Set(calledNumbers.map((calledNumber) => calledNumber.number));
+  const usedNumbers = new Set(
+    calledNumbers.map((calledNumber) => calledNumber.number),
+  );
 
   return Array.from({ length: 75 }, (_, index) => index + 1).filter(
     (number) => !usedNumbers.has(number),
@@ -1182,6 +1489,22 @@ function getRandomCallNumber(remainingNumbers: number[]) {
 
 function canCreateGame(form: CreateGameFormState) {
   return form.gameRuleId.trim().length > 0;
+}
+
+function isValidEntryFee(entryFee: string) {
+  const entry = parseMoney(entryFee);
+  const prize = parseMoney(PRIZE_PER_CARTELA);
+  return (
+    entryFee.trim().length > 0 &&
+    Number.isFinite(entry) &&
+    Number.isFinite(prize) &&
+    entry >= prize
+  );
+}
+
+function parseMoney(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 function isValidCalledNumber(value: number) {

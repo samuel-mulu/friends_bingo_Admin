@@ -175,12 +175,42 @@ export interface GameRuleSummary {
 export interface AdminGame {
   id: string;
   staticCode: string;
+  playCode: string | null;
+  sessionId: string | null;
   name: string;
   gameRuleId: string | null;
   gameRule: GameRuleSummary | null;
   gameType: string;
   status: GameStatus;
   sortOrder: number | null;
+  playOrder: number | null;
+  entryFee: string;
+  prizePerCartela: string;
+  companyFeePerCartela: string;
+  prizeAmount: string;
+  companyRevenue: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  winnerCartelaId: string | null;
+  registeredCartelasCount: number;
+  calledNumbersCount: number;
+  registrationOpen: boolean;
+  latestSession: {
+    id: string;
+    sessionId: string;
+    playCode: string;
+    entryFee: string;
+    prizePerCartela: string;
+    companyFeePerCartela: string;
+    prizeAmount: string;
+    companyRevenue: string;
+    status: GameStatus;
+    startedAt: string | null;
+    finishedAt: string | null;
+    winnerCartelaId: string | null;
+    registeredCartelasCount: number;
+    calledNumbersCount: number;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -195,7 +225,7 @@ export interface UpdateGameStatusPayload {
 
 export interface CalledNumber {
   id: string;
-  gameId: string;
+  gameSessionId: string;
   letter: string;
   number: number;
   order: number;
@@ -268,7 +298,7 @@ export interface BingoClaimUserSummary {
 
 export interface AdminBingoClaim {
   id: string;
-  gameId: string;
+  gameSessionId: string;
   userId: string;
   gameCartelaId: string;
   status: BingoClaimStatus;
@@ -277,12 +307,17 @@ export interface AdminBingoClaim {
   createdAt: string;
   checkedAt: string | null;
   user: BingoClaimUserSummary;
-  game: {
+  gameSession: {
     id: string;
-    code: string;
+    playCode: string;
     status: GameStatus;
     prizeAmount: string;
-    gameRule: GameRuleSummary | null;
+    gameSlot: {
+      id: string;
+      gameType: string;
+      name: string;
+      gameRule: GameRuleSummary | null;
+    };
   };
   gameCartela: {
     id: string;

@@ -48,7 +48,9 @@ export function BingoClaimsManagement() {
   const [approveTarget, setApproveTarget] = useState<AdminBingoClaim | null>(
     null,
   );
-  const [rejectTarget, setRejectTarget] = useState<AdminBingoClaim | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<AdminBingoClaim | null>(
+    null,
+  );
   const [actionError, setActionError] = useState<string | null>(null);
 
   const claimsQuery = useQuery({
@@ -61,7 +63,9 @@ export function BingoClaimsManagement() {
     onSuccess: async () => {
       setApproveTarget(null);
       setActionError(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "bingo-claims"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "bingo-claims"],
+      });
       await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
     },
     onError: (error) => {
@@ -72,17 +76,14 @@ export function BingoClaimsManagement() {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: ({
-      claimId,
-      reason,
-    }: {
-      claimId: string;
-      reason: string;
-    }) => rejectAdminBingoClaim(claimId, reason),
+    mutationFn: ({ claimId, reason }: { claimId: string; reason: string }) =>
+      rejectAdminBingoClaim(claimId, reason),
     onSuccess: async () => {
       setRejectTarget(null);
       setActionError(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "bingo-claims"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "bingo-claims"],
+      });
     },
     onError: (error) => {
       setActionError(
@@ -165,30 +166,41 @@ export function BingoClaimsManagement() {
                 <TableBody>
                   {claimsQuery.data.items.map((claim) => {
                     const canReview = claim.status === "PENDING";
+                    const slot = claim.gameSession.gameSlot;
+                    const rule = slot.gameRule;
 
                     return (
                       <TableRow key={claim.id}>
                         <TableCell>
                           <div className="min-w-[150px]">
-                            <div className="font-medium">{claim.game.code}</div>
+                            <div className="font-medium">
+                              {claim.gameSession.playCode}
+                            </div>
                             <div className="text-xs text-muted-foreground">
-                              Prize {formatCurrency(claim.game.prizeAmount)}
+                              Slot {slot.name} ·{" "}
+                              {slot.gameRule?.name ?? slot.gameType}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Prize{" "}
+                              {formatCurrency(claim.gameSession.prizeAmount)}
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="min-w-[140px]">
                             <div className="font-medium">
-                              {claim.game.gameRule?.name ?? claim.checkedPattern ?? "-"}
+                              {rule?.name ?? claim.checkedPattern ?? "-"}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {claim.game.gameRule?.key ?? claim.checkedPattern ?? "-"}
+                              {rule?.key ?? claim.checkedPattern ?? "-"}
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="min-w-[180px]">
-                            <div className="font-medium">{claim.user.fullName}</div>
+                            <div className="font-medium">
+                              {claim.user.fullName}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               {claim.user.phoneNumber}
                             </div>
@@ -254,7 +266,7 @@ export function BingoClaimsManagement() {
         title="Approve bingo claim"
         description={
           approveTarget
-            ? `Approve cartela #${approveTarget.gameCartela.cartela.number} for ${approveTarget.user.fullName}. This will finish ${approveTarget.game.code} and pay the configured prize.`
+            ? `Approve cartela #${approveTarget.gameCartela.cartela.number} for ${approveTarget.user.fullName}. This will finish ${approveTarget.gameSession.playCode} and pay ${formatCurrency(approveTarget.gameSession.prizeAmount)}.`
             : "Approve this bingo claim."
         }
         confirmLabel="Approve claim"

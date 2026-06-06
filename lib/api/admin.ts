@@ -50,24 +50,21 @@ export function getGamesReport(params: ReportDateRangeParams) {
   });
 }
 
-export interface LiveGameResponse {
-  type: "session" | "slot";
-  data: { id: string; [key: string]: unknown };
-}
-
 export function getCurrentLiveSession() {
-  return apiRequest<LiveGameResponse | null>({
+  return apiRequest<AdminGame | null>({
     url: "/games/current/live",
     method: "GET",
   });
 }
 
 export function extractLiveSessionId(
-  live: LiveGameResponse | null | undefined,
+  live: AdminGame | null | undefined,
 ): string | null {
-  if (!live) return null;
-  if (live.type === "session") return live.data.id as string;
-  return null;
+  if (!live || live.status === "NEXT") {
+    return null;
+  }
+
+  return live.sessionId ?? live.id;
 }
 
 export function getAdminDeposits(page = 1, pageSize = 20) {
@@ -176,12 +173,29 @@ export function updateAdminGameStatus(
   });
 }
 
-export function startAdminGame(gameId: string, entryFee?: string) {
+export function updateAdminSlotEntryFee(gameId: string, entryFee: string) {
+  return apiRequest<AdminGame>({
+    url: `/admin/slots/${gameId}/entry-fee`,
+    method: "PATCH",
+    data: { entryFee },
+  });
+}
+
+export interface StartAdminGamePayload {
+  entryFee?: string;
+  prizePerCartela?: string;
+  companyFeePerCartela?: string;
+}
+
+export function startAdminGame(
+  gameId: string,
+  payload?: StartAdminGamePayload,
+) {
   // New architecture: start a session from a slot
   return apiRequest<AdminGame>({
     url: `/admin/slots/${gameId}/start`,
     method: "POST",
-    data: entryFee ? { entryFee } : undefined,
+    data: payload,
   });
 }
 
