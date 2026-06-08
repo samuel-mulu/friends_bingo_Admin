@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, XCircle } from "lucide-react";
 
 import {
@@ -12,7 +12,7 @@ import {
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type { AdminBingoClaim } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
-import { ActionDialog } from "@/components/admin/action-dialog";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
 import { AdminTableSkeleton } from "@/components/admin/admin-table-skeleton";
@@ -21,6 +21,7 @@ import {
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
 import { PageHeader } from "@/components/admin/page-header";
+import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -43,7 +44,6 @@ const bingoClaimsQueryKey = (page: number) =>
   ["admin", "bingo-claims", page] as const;
 
 export function BingoClaimsManagement() {
-  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [approveTarget, setApproveTarget] = useState<AdminBingoClaim | null>(
     null,
@@ -51,44 +51,30 @@ export function BingoClaimsManagement() {
   const [rejectTarget, setRejectTarget] = useState<AdminBingoClaim | null>(
     null,
   );
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const claimsQuery = useQuery({
     queryKey: bingoClaimsQueryKey(page),
     queryFn: () => getAdminBingoClaims(page, pageSize),
   });
 
-  const approveMutation = useMutation({
+  const approveMutation = useAdminMutation({
     mutationFn: (claimId: string) => approveAdminBingoClaim(claimId),
-    onSuccess: async () => {
+    successMessage: "Bingo claim approved.",
+    errorMessage: "The bingo claim could not be approved.",
+    invalidateQueryKeys: [["admin", "bingo-claims"], ["games", "operations", "current"]],
+    onSuccess: () => {
       setApproveTarget(null);
-      setActionError(null);
-      await queryClient.invalidateQueries({
-        queryKey: ["admin", "bingo-claims"],
-      });
-      await queryClient.invalidateQueries({ queryKey: ["admin", "games"] });
-    },
-    onError: (error) => {
-      setActionError(
-        getApiErrorMessage(error, "The bingo claim could not be approved."),
-      );
     },
   });
 
-  const rejectMutation = useMutation({
+  const rejectMutation = useAdminMutation({
     mutationFn: ({ claimId, reason }: { claimId: string; reason: string }) =>
       rejectAdminBingoClaim(claimId, reason),
-    onSuccess: async () => {
+    successMessage: "Bingo claim rejected.",
+    errorMessage: "The bingo claim could not be rejected.",
+    invalidateQueryKeys: [["admin", "bingo-claims"]],
+    onSuccess: () => {
       setRejectTarget(null);
-      setActionError(null);
-      await queryClient.invalidateQueries({
-        queryKey: ["admin", "bingo-claims"],
-      });
-    },
-    onError: (error) => {
-      setActionError(
-        getApiErrorMessage(error, "The bingo claim could not be rejected."),
-      );
     },
   });
 
@@ -103,7 +89,7 @@ export function BingoClaimsManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Bingo Claims"
-        description="Review pending player bingo claims, confirm valid winners, and reject invalid submissions before the game result is finalized."
+        description="Manual-rule fallback queue. Automatic FULL_HOUSE and HALF_HOUSE games resolve claims without admin review."
       />
 
       <Card>
@@ -112,8 +98,8 @@ export function BingoClaimsManagement() {
             <div className="space-y-1">
               <CardTitle>Claims queue</CardTitle>
               <CardDescription>
-                Manual claim review is the MVP source of truth for deciding the
-                winner and finalizing prize payout.
+                Approve and reject actions apply only to legacy MANUAL games.
+                Automatic games use the winner window flow instead.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -125,11 +111,6 @@ export function BingoClaimsManagement() {
               </div>
             </div>
           </div>
-          {actionError ? (
-            <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {actionError}
-            </div>
-          ) : null}
         </CardHeader>
 
         <CardContent className="px-0 pt-0">
@@ -165,9 +146,12 @@ export function BingoClaimsManagement() {
                 </TableHeader>
                 <TableBody>
                   {claimsQuery.data.items.map((claim) => {
-                    const canReview = claim.status === "PENDING";
                     const slot = claim.gameSession.gameSlot;
                     const rule = slot.gameRule;
+                    const isManualRule =
+                      rule?.key === "MANUAL" || slot.gameType === "MANUAL";
+                    const canReview =
+                      claim.status === "PENDING" && isManualRule;
 
                     return (
                       <TableRow key={claim.id}>
@@ -214,32 +198,32 @@ export function BingoClaimsManagement() {
                         </TableCell>
                         <TableCell>{formatDateTime(claim.createdAt)}</TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={!canReview}
-                              onClick={() => {
-                                setActionError(null);
-                                setApproveTarget(claim);
-                              }}
-                            >
-                              <CheckCircle2 className="size-4" />
-                              Approve
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              disabled={!canReview}
-                              onClick={() => {
-                                setActionError(null);
-                                setRejectTarget(claim);
-                              }}
-                            >
-                              <XCircle className="size-4" />
-                              Reject
-                            </Button>
-                          </div>
+                          {isManualRule ? (
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={!canReview}
+                                onClick={() => setApproveTarget(claim)}
+                              >
+                                <CheckCircle2 className="size-4" />
+                                Approve
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                disabled={!canReview}
+                                onClick={() => setRejectTarget(claim)}
+                              >
+                                <XCircle className="size-4" />
+                                Reject
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              Auto-resolved
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -255,12 +239,11 @@ export function BingoClaimsManagement() {
         </CardContent>
       </Card>
 
-      <ActionDialog
+      <ConfirmActionDialog
         open={Boolean(approveTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setApproveTarget(null);
-            setActionError(null);
           }
         }}
         title="Approve bingo claim"
@@ -270,7 +253,6 @@ export function BingoClaimsManagement() {
             : "Approve this bingo claim."
         }
         confirmLabel="Approve claim"
-        errorMessage={approveTarget ? actionError : null}
         onConfirm={() => {
           if (!approveTarget) {
             return;
@@ -281,12 +263,11 @@ export function BingoClaimsManagement() {
         isPending={approveMutation.isPending}
       />
 
-      <ActionDialog
+      <ConfirmActionDialog
         open={Boolean(rejectTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setRejectTarget(null);
-            setActionError(null);
           }
         }}
         title="Reject bingo claim"
@@ -302,7 +283,6 @@ export function BingoClaimsManagement() {
           placeholder: "Explain why this claim is being rejected",
           required: true,
         }}
-        errorMessage={rejectTarget ? actionError : null}
         onConfirm={(value) => {
           if (!rejectTarget || !value?.trim()) {
             return;

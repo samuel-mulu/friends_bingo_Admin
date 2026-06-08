@@ -30,7 +30,9 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AdminSession | null>(readInitialSession);
+  const [session, setSession] = useState<AdminSession | null>(
+    readInitialSession,
+  );
   const isHydrated = useSyncExternalStore(
     subscribeToHydration,
     getClientSnapshot,
@@ -53,8 +55,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (session?.accessToken && typeof window !== "undefined") {
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002";
-      socketService.connect(apiBaseUrl, session.accessToken);
+      const socketBaseUrl =
+        process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:3002";
+      socketService.connect(socketBaseUrl, session.accessToken);
     }
 
     return () => {

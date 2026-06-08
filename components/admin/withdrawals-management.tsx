@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { BadgeCheck, Send, XCircle } from "lucide-react";
 
 import {
@@ -13,7 +13,7 @@ import {
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type { AdminWithdrawal } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
-import { ActionDialog } from "@/components/admin/action-dialog";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
 import { AdminTableSkeleton } from "@/components/admin/admin-table-skeleton";
@@ -22,6 +22,7 @@ import {
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
 import { PageHeader } from "@/components/admin/page-header";
+import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -45,35 +46,29 @@ const withdrawalsQueryKey = (page: number) =>
 const reversibleStatuses = new Set(["PENDING", "APPROVED"]);
 
 export function WithdrawalsManagement() {
-  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [approveTarget, setApproveTarget] = useState<AdminWithdrawal | null>(
     null,
   );
   const [rejectTarget, setRejectTarget] = useState<AdminWithdrawal | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminWithdrawal | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const withdrawalsQuery = useQuery({
     queryKey: withdrawalsQueryKey(page),
     queryFn: () => getAdminWithdrawals(page, pageSize),
   });
 
-  const approveMutation = useMutation({
+  const approveMutation = useAdminMutation({
     mutationFn: (withdrawalId: string) => approveWithdrawal(withdrawalId),
-    onSuccess: async () => {
+    successMessage: "Withdrawal approved.",
+    errorMessage: "The withdrawal could not be approved.",
+    invalidateQueryKeys: [["admin", "withdrawals"]],
+    onSuccess: () => {
       setApproveTarget(null);
-      setActionError(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "withdrawals"] });
-    },
-    onError: (error) => {
-      setActionError(
-        getApiErrorMessage(error, "The withdrawal could not be approved."),
-      );
     },
   });
 
-  const rejectMutation = useMutation({
+  const rejectMutation = useAdminMutation({
     mutationFn: ({
       withdrawalId,
       adminNote,
@@ -81,19 +76,15 @@ export function WithdrawalsManagement() {
       withdrawalId: string;
       adminNote: string;
     }) => rejectWithdrawal(withdrawalId, adminNote),
-    onSuccess: async () => {
+    successMessage: "Withdrawal rejected.",
+    errorMessage: "The withdrawal could not be rejected.",
+    invalidateQueryKeys: [["admin", "withdrawals"]],
+    onSuccess: () => {
       setRejectTarget(null);
-      setActionError(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "withdrawals"] });
-    },
-    onError: (error) => {
-      setActionError(
-        getApiErrorMessage(error, "The withdrawal could not be rejected."),
-      );
     },
   });
 
-  const markPaidMutation = useMutation({
+  const markPaidMutation = useAdminMutation({
     mutationFn: ({
       withdrawalId,
       payoutRef,
@@ -101,15 +92,11 @@ export function WithdrawalsManagement() {
       withdrawalId: string;
       payoutRef?: string;
     }) => markWithdrawalPaid(withdrawalId, payoutRef),
-    onSuccess: async () => {
+    successMessage: "Withdrawal marked as paid.",
+    errorMessage: "The payout could not be marked as paid.",
+    invalidateQueryKeys: [["admin", "withdrawals"]],
+    onSuccess: () => {
       setPaidTarget(null);
-      setActionError(null);
-      await queryClient.invalidateQueries({ queryKey: ["admin", "withdrawals"] });
-    },
-    onError: (error) => {
-      setActionError(
-        getApiErrorMessage(error, "The payout could not be marked as paid."),
-      );
     },
   });
 
@@ -150,11 +137,6 @@ export function WithdrawalsManagement() {
               </div>
             </div>
           </div>
-          {actionError ? (
-            <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {actionError}
-            </div>
-          ) : null}
         </CardHeader>
 
         <CardContent className="px-0 pt-0">
@@ -226,10 +208,7 @@ export function WithdrawalsManagement() {
                               variant="outline"
                               size="sm"
                               disabled={!canApprove}
-                              onClick={() => {
-                                setActionError(null);
-                                setApproveTarget(withdrawal);
-                              }}
+                              onClick={() => setApproveTarget(withdrawal)}
                             >
                               <BadgeCheck className="size-4" />
                               Approve
@@ -238,10 +217,7 @@ export function WithdrawalsManagement() {
                               variant="destructive"
                               size="sm"
                               disabled={!canReject}
-                              onClick={() => {
-                                setActionError(null);
-                                setRejectTarget(withdrawal);
-                              }}
+                              onClick={() => setRejectTarget(withdrawal)}
                             >
                               <XCircle className="size-4" />
                               Reject
@@ -250,10 +226,7 @@ export function WithdrawalsManagement() {
                               variant="secondary"
                               size="sm"
                               disabled={!canMarkPaid}
-                              onClick={() => {
-                                setActionError(null);
-                                setPaidTarget(withdrawal);
-                              }}
+                              onClick={() => setPaidTarget(withdrawal)}
                             >
                               <Send className="size-4" />
                               Mark paid
@@ -274,12 +247,11 @@ export function WithdrawalsManagement() {
         </CardContent>
       </Card>
 
-      <ActionDialog
+      <ConfirmActionDialog
         open={Boolean(approveTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setApproveTarget(null);
-            setActionError(null);
           }
         }}
         title="Approve withdrawal"
@@ -289,7 +261,6 @@ export function WithdrawalsManagement() {
             : "Approve this withdrawal."
         }
         confirmLabel="Approve withdrawal"
-        errorMessage={approveTarget ? actionError : null}
         onConfirm={() => {
           if (!approveTarget) {
             return;
@@ -300,12 +271,11 @@ export function WithdrawalsManagement() {
         isPending={approveMutation.isPending}
       />
 
-      <ActionDialog
+      <ConfirmActionDialog
         open={Boolean(rejectTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setRejectTarget(null);
-            setActionError(null);
           }
         }}
         title="Reject withdrawal"
@@ -321,7 +291,6 @@ export function WithdrawalsManagement() {
           placeholder: "Add an internal note for this rejection",
           required: true,
         }}
-        errorMessage={rejectTarget ? actionError : null}
         onConfirm={(value) => {
           if (!rejectTarget || !value?.trim()) {
             return;
@@ -335,12 +304,11 @@ export function WithdrawalsManagement() {
         isPending={rejectMutation.isPending}
       />
 
-      <ActionDialog
+      <ConfirmActionDialog
         open={Boolean(paidTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setPaidTarget(null);
-            setActionError(null);
           }
         }}
         title="Mark withdrawal paid"
@@ -354,7 +322,6 @@ export function WithdrawalsManagement() {
           label: "Payout reference",
           placeholder: "Optional bank or transfer reference",
         }}
-        errorMessage={paidTarget ? actionError : null}
         onConfirm={(value) => {
           if (!paidTarget) {
             return;

@@ -4,18 +4,28 @@ export class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
 
-  connect(apiBaseUrl: string, token: string) {
-    if (this.socket?.connected) {
+  connect(socketBaseUrl: string, token: string) {
+    const normalizedToken = token.trim();
+    if (!normalizedToken) {
       return;
     }
 
-    this.token = token;
+    if (this.socket && this.token === normalizedToken) {
+      return;
+    }
 
-    this.socket = io(`${apiBaseUrl}/realtime`, {
-      transports: ["websocket"],
-      auth: { token },
-      extraHeaders: { Authorization: `Bearer ${token}` },
-      autoConnect: true,
+    this.disconnect();
+
+    this.token = normalizedToken;
+
+    this.socket = io(`${socketBaseUrl}/realtime`, {
+      path: "/socket.io",
+      transports: ["polling", "websocket"],
+      auth: { token: normalizedToken },
+      autoConnect: false,
+      forceNew: true,
+      multiplex: false,
+      reconnection: true,
     });
 
     this.socket.on("connect", () => {
@@ -29,11 +39,14 @@ export class SocketService {
     this.socket.on("connect_error", (error: Error) => {
       console.error("[Socket] Connection error:", error);
     });
+
+    this.socket.connect();
   }
 
   disconnect() {
     if (this.socket) {
       this.socket.disconnect();
+      this.socket.removeAllListeners();
       this.socket = null;
     }
     this.token = null;

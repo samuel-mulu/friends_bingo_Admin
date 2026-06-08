@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
-
+import { LoadingButton } from "@/components/admin/loading-button";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -80,20 +79,15 @@ export function ActionDialog({
           >
             Cancel
           </Button>
-          <Button
+          <LoadingButton
             variant={confirmVariant}
-            disabled={isPending || Boolean(field?.required && !value.trim())}
+            isLoading={isPending}
+            loadingLabel="Working..."
+            disabled={Boolean(field?.required && !value.trim())}
             onClick={() => onConfirm(value)}
           >
-            {isPending ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Working...
-              </>
-            ) : (
-              confirmLabel
-            )}
-          </Button>
+            {confirmLabel}
+          </LoadingButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

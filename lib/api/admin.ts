@@ -50,21 +50,74 @@ export function getGamesReport(params: ReportDateRangeParams) {
   });
 }
 
-export function getCurrentLiveSession() {
-  return apiRequest<AdminGame | null>({
-    url: "/games/current/live",
-    method: "GET",
-  });
+// CANONICAL SOURCE OF TRUTH - Both Admin and Flutter use this
+// Backend decides which game is live/checking/registration/queue
+// Frontend must NOT apply additional filtering/sorting
+export interface GameOperationItem {
+  slotId: string;
+  sessionId: string | null;
+  staticCode: string;
+  playCode: string | null;
+  rawStatus: string;
+  playerStatus:
+    | 'registrationOpen'
+    | 'playing'
+    | 'winnerWindow'
+    | 'checking'
+    | 'finished'
+    | 'cancelled';
+  operationStatus: 'live' | 'checking' | 'registration' | 'queue';
+  gameRule: { id: string; name: string; key: string } | null;
+  entryFee: string;
+  prizePerCartela: string;
+  prizeAmount: string;
+  companyRevenue?: string;
+  registeredCartelasCount: number;
+  calledNumbersCount: number;
+  sortOrder: number | null;
+  winnerCartelaId: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  registrationOpen: boolean;
+  canStart: boolean;
+  canRegister: boolean;
+  canCallNumber: boolean;
+  canClaimBingo: boolean;
+  winnerWindowStartedAt?: string | null;
+  winnerWindowEndsAt?: string | null;
+  winnerCartelasSummary?: Array<{
+    gameCartelaId: string;
+    cartelaId: string;
+    cartelaNumber: number;
+  }>;
+  winnerPayoutsSummary?: Array<{
+    cartelaId: string;
+    cartelaNumber: number;
+    amount: string;
+    owner?: "ME" | "OTHER";
+  }>;
+  latestCalledNumber?: {
+    letter: string;
+    number: number;
+    order: number;
+  } | null;
+  autoCallEnabled?: boolean;
+  autoCallIntervalMs?: number;
 }
 
-export function extractLiveSessionId(
-  live: AdminGame | null | undefined,
-): string | null {
-  if (!live || live.status === "NEXT") {
-    return null;
-  }
+export interface GameOperationsCurrentResponse {
+  liveGame: GameOperationItem | null;
+  checkingGame: GameOperationItem | null;
+  registrationOpenGame: GameOperationItem | null;
+  queue: GameOperationItem[];
+  timestamp: string;
+}
 
-  return live.sessionId ?? live.id;
+export function getCurrentGameOperations() {
+  return apiRequest<GameOperationsCurrentResponse>({
+    url: "/games/operations/current",
+    method: "GET",
+  });
 }
 
 export function getAdminDeposits(page = 1, pageSize = 20) {
@@ -211,6 +264,20 @@ export function cancelBlockingSession(sessionId: string) {
   return apiRequest<{ success: true; sessionId: string }>({
     url: `/admin/sessions/${sessionId}/cancel`,
     method: "PATCH",
+  });
+}
+
+export function startSessionAutoCall(sessionId: string) {
+  return apiRequest<{ success: true; sessionId: string; autoCallEnabled: true }>({
+    url: `/admin/sessions/${sessionId}/auto-call/start`,
+    method: "POST",
+  });
+}
+
+export function stopSessionAutoCall(sessionId: string) {
+  return apiRequest<{ success: true; sessionId: string; autoCallEnabled: false }>({
+    url: `/admin/sessions/${sessionId}/auto-call/stop`,
+    method: "POST",
   });
 }
 

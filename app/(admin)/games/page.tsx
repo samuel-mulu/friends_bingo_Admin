@@ -1,5 +1,5 @@
-import { GamesManagement } from "@/components/admin/games-management";
+import { GameOperations } from "@/components/admin/game-operations";
 
 export default function GamesPage() {
-  return <GamesManagement />;
+  return <GameOperations />;
 }
