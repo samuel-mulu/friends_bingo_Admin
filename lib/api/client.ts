@@ -28,6 +28,7 @@ export class ApiError extends Error {
 
 export const apiClient = axios.create({
   baseURL,
+  timeout: 20_000,
   headers: {
     Accept: "application/json",
     "Content-Type": "application/json",
@@ -95,6 +96,13 @@ export async function apiPaginatedRequest<T>(
 }
 
 function toApiError(error: AxiosError<ApiErrorEnvelope>) {
+  if (error.code === "ECONNABORTED") {
+    return new ApiError(
+      "Request timed out. Please try again.",
+      error.response?.status,
+    );
+  }
+
   const envelope = error.response?.data;
   const errorNode = envelope?.error;
   const message = Array.isArray(errorNode?.message)

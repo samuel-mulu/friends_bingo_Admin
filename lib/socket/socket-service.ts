@@ -1,8 +1,11 @@
 import { io, Socket } from "socket.io-client";
 
+type ConnectionListener = (connected: boolean) => void;
+
 export class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
+  private connectionListeners = new Set<ConnectionListener>();
 
   connect(socketBaseUrl: string, token: string) {
     const normalizedToken = token.trim();
@@ -30,14 +33,17 @@ export class SocketService {
 
     this.socket.on("connect", () => {
       console.log("[Socket] Connected");
+      this.notifyConnectionListeners(true);
     });
 
     this.socket.on("disconnect", () => {
       console.log("[Socket] Disconnected");
+      this.notifyConnectionListeners(false);
     });
 
     this.socket.on("connect_error", (error: Error) => {
       console.error("[Socket] Connection error:", error);
+      this.notifyConnectionListeners(false);
     });
 
     this.socket.connect();
@@ -50,6 +56,7 @@ export class SocketService {
       this.socket = null;
     }
     this.token = null;
+    this.notifyConnectionListeners(false);
   }
 
   on(event: string, handler: (data: unknown) => void) {
@@ -60,8 +67,21 @@ export class SocketService {
     this.socket?.off(event, handler);
   }
 
+  onConnectionChange(listener: ConnectionListener) {
+    this.connectionListeners.add(listener);
+    listener(this.isConnected);
+
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
+  }
+
   get isConnected(): boolean {
     return this.socket?.connected ?? false;
+  }
+
+  private notifyConnectionListeners(connected: boolean) {
+    this.connectionListeners.forEach((listener) => listener(connected));
   }
 }
 

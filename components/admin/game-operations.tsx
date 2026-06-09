@@ -132,6 +132,9 @@ export function GameOperations() {
     slotId: string;
     direction: "up" | "down";
   } | null>(null);
+  const [socketConnected, setSocketConnected] = useState(
+    () => socketService.isConnected,
+  );
 
   // CANONICAL: Use backend's single source of truth endpoint
   // Backend decides which game is live/checking/registration/queue
@@ -143,6 +146,8 @@ export function GameOperations() {
   } = useQuery({
     queryKey: operationsQueryKey,
     queryFn: getCurrentGameOperations,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
     refetchInterval: false,
   });
 
@@ -167,6 +172,23 @@ export function GameOperations() {
   const registrationOpenGame = operations?.registrationOpenGame;
   const queue = operations?.queue ?? [];
   const liveSessionId = liveGame?.sessionId ?? null;
+  const pollOperationsFallback = !!liveGame || !socketConnected;
+
+  useEffect(() => {
+    return socketService.onConnectionChange(setSocketConnected);
+  }, []);
+
+  useEffect(() => {
+    if (!pollOperationsFallback) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refetch();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [pollOperationsFallback, refetch]);
 
   const { data: liveCalledNumbersData } = useQuery({
     queryKey: liveSessionId
@@ -405,6 +427,10 @@ export function GameOperations() {
   });
 
   const handleReorder = (slotId: string, direction: "up" | "down") => {
+    if (reorderSlots.isPending) {
+      return;
+    }
+
     const slotIds = reorderableSlots.map((slot) => slot.slotId);
     const currentIndex = slotIds.indexOf(slotId);
     if (currentIndex === -1) return;
@@ -480,6 +506,12 @@ export function GameOperations() {
         title="Game Operations"
         description="Manage live games, registrations, and queue"
       />
+
+      {!socketConnected ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          Realtime disconnected. Reconnecting and polling game state every 5 seconds.
+        </div>
+      ) : null}
 
       {/* 1. LIVE GAME - PLAYING status */}
       {liveGame && (
