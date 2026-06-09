@@ -16,32 +16,30 @@ import {
 
 export function AdminSidebar({ pathname }: { pathname: string }) {
   return (
-    <>
-      <aside className="hidden w-72 shrink-0 border-r border-border/60 bg-white/80 px-4 py-5 backdrop-blur lg:flex lg:flex-col">
-        <SidebarContent pathname={pathname} />
-      </aside>
-      <div className="border-b border-border/60 bg-white/80 px-4 py-3 backdrop-blur lg:hidden">
-        <Sheet>
-          <div className="flex items-center justify-between">
-            <BrandBlock compact />
-            <SheetTrigger asChild>
-              <Button variant="outline" size="icon">
-                <Menu className="size-4" />
-                <span className="sr-only">Open navigation</span>
-              </Button>
-            </SheetTrigger>
-          </div>
-          <SheetContent side="left" className="w-80 p-0">
-            <SheetHeader className="border-b border-border/60">
-              <SheetTitle>Friends Bingo Admin</SheetTitle>
-            </SheetHeader>
-            <div className="p-4">
-              <SidebarContent pathname={pathname} />
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
-    </>
+    <aside className="hidden w-72 shrink-0 border-r border-border/60 bg-white/80 px-4 py-5 backdrop-blur lg:flex lg:flex-col">
+      <SidebarContent pathname={pathname} />
+    </aside>
+  );
+}
+
+export function AdminMobileNav({ pathname }: { pathname: string }) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant="outline" size="icon" className="shrink-0 lg:hidden">
+          <Menu className="size-4" />
+          <span className="sr-only">Open navigation</span>
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="left" className="w-[min(20rem,88vw)] p-0">
+        <SheetHeader className="border-b border-border/60">
+          <SheetTitle>Friends Bingo Admin</SheetTitle>
+        </SheetHeader>
+        <div className="p-4">
+          <SidebarContent pathname={pathname} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -98,13 +96,13 @@ function SidebarContent({ pathname }: { pathname: string }) {
   );
 }
 
-function BrandBlock({ compact = false }: { compact?: boolean }) {
+function BrandBlock() {
   return (
     <div className="flex items-center gap-3">
       <div className="flex size-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#0d5c63_0%,#1f7a8c_100%)] text-sm font-semibold text-white shadow-sm">
         FB
       </div>
-      <div className={cn(compact && "hidden sm:block")}>
+      <div>
         <p className="text-sm font-semibold text-foreground">Friends Bingo</p>
         <p className="text-xs text-muted-foreground">Admin control panel</p>
       </div>

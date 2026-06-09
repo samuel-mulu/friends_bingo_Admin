@@ -505,6 +505,7 @@ export function GameOperations() {
       <PageHeader
         title="Game Operations"
         description="Manage live games, registrations, and queue"
+        className="hidden sm:block"
       />
 
       {!socketConnected ? (
@@ -517,13 +518,13 @@ export function GameOperations() {
       {liveGame && (
         <Card className="border-green-200 bg-green-50/50">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
                 <Radio className="h-5 w-5 animate-pulse text-green-600" />
                 <CardTitle className="text-green-900">Live Game</CardTitle>
                 <Badge className="bg-green-100 text-green-800">PLAYING</Badge>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <LoadingButton
                   variant="outline"
                   size="sm"
@@ -601,7 +602,7 @@ export function GameOperations() {
 
             {isWinnerWindow && liveGame.winnerWindowEndsAt && (
               <div className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-violet-900">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-medium">Winner window open</p>
                     <p className="text-sm text-violet-800">
@@ -646,7 +647,7 @@ export function GameOperations() {
             )}
 
             {isAutoCalling && (
-              <div className="flex items-center justify-between rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-800">
+              <div className="flex flex-col gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-800 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Radio className="h-4 w-4 animate-pulse" />
                   Auto Call is running every {autoCallIntervalSec} seconds
@@ -706,7 +707,7 @@ export function GameOperations() {
               {bingoClaims.map((claim) => (
                 <Card key={claim.id} className="bg-white">
                   <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="font-medium">
                           Cartela #{claim.gameCartela?.cartela?.number}
@@ -718,7 +719,7 @@ export function GameOperations() {
                           Pattern: {claim.checkedPattern}
                         </p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           variant="outline"
                           size="sm"
@@ -750,7 +751,7 @@ export function GameOperations() {
       {registrationOpenGame && (
         <Card className="border-blue-200 bg-gradient-to-br from-blue-50/80 to-slate-50">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <Clock3 className="h-5 w-5 text-blue-600" />
@@ -926,9 +927,9 @@ export function GameOperations() {
                 return (
                 <div
                   key={game.slotId}
-                  className="flex items-center justify-between rounded-lg border p-3"
+                  className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-sm font-medium">
                       {queuePosition}
                     </span>
@@ -945,7 +946,7 @@ export function GameOperations() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
                     <QueueOrderButtons
                       slotId={game.slotId}
                       reorderableSlots={reorderableSlots}

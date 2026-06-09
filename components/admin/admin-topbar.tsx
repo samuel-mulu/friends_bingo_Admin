@@ -2,6 +2,7 @@
 
 import { LogOut, Shield } from "lucide-react";
 
+import { AdminMobileNav } from "@/components/admin/admin-sidebar";
 import { pageTitleFromPath } from "@/lib/navigation";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { Button } from "@/components/ui/button";
@@ -19,14 +20,17 @@ export function AdminTopbar({ pathname }: { pathname: string }) {
 
   return (
     <header className="sticky top-0 z-20 border-b border-border/60 bg-white/80 backdrop-blur">
-      <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
-            Operations
-          </p>
-          <h1 className="text-xl font-semibold text-foreground">
-            {pageTitleFromPath(pathname)}
-          </h1>
+      <div className="flex items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:px-8">
+        <div className="flex min-w-0 items-center gap-3">
+          <AdminMobileNav pathname={pathname} />
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
+              Operations
+            </p>
+            <h1 className="truncate text-lg font-semibold text-foreground sm:text-xl">
+              {pageTitleFromPath(pathname)}
+            </h1>
+          </div>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -35,9 +35,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f7faf8_0%,#f2f7f5_40%,#eef4f2_100%)]">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1600px]">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col lg:flex-row">
         <AdminSidebar pathname={pathname} />
-        <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:min-h-screen">
           <AdminTopbar pathname={pathname} />
           <main className="flex-1 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
             {children}
