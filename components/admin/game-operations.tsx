@@ -16,8 +16,19 @@
  * 4. QUEUE = response.queue (remaining NEXT slots)
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -64,10 +75,18 @@ import {
   stopSessionAutoCall,
   updateAdminGameStatus,
   updateAdminSlotEntryFee,
+  type GameOperationsCurrentResponse,
 } from "@/lib/api/admin";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { LoadingButton } from "@/components/admin/loading-button";
-import { getApiErrorMessage } from "@/lib/api/errors";
+import { getApiErrorMessage, isApiRateLimitError } from "@/lib/api/errors";
+import { ApiError } from "@/lib/api/client";
+import {
+  getCreateFormDefaults,
+  getOperationModeHint,
+  readStoredDefaultOperationMode,
+  writeStoredDefaultOperationMode,
+} from "@/lib/admin/game-operation-defaults";
 import {
   isMutationPendingFor,
   useAdminMutation,
@@ -76,9 +95,23 @@ import type {
   AdminBingoClaim,
   CallNumberPayload,
   CalledNumber,
+  CreateGamePayload,
+  GameOperationMode,
 } from "@/lib/api/types";
 import { formatCurrency } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
+import {
+  appendCalledNumberToCache,
+  applySocketOperationUpdate,
+  bingoClaimsQueryKey,
+  calledNumbersQueryKey,
+  createOptimisticCalledNumber,
+  operationsQueryKey,
+  optimisticallyPatchEntryFee,
+  optimisticallyRemoveBingoClaim,
+  optimisticallyReorderQueue,
+  patchOperationsCache,
+} from "@/lib/admin/game-operations-cache";
 import { socketService } from "@/lib/socket/socket-service";
 import { Button } from "@/components/ui/button";
 import {
@@ -97,11 +130,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-// Query keys
-const operationsQueryKey = ["games", "operations", "current"] as const;
-const bingoClaimsQueryKey = ["admin", "bingo-claims", "pending"] as const;
-const calledNumbersQueryKey = (sessionId: string) =>
-  ["games", "called-numbers", sessionId] as const;
+const OPERATIONS_INVALIDATE_DEBOUNCE_MS = 250;
 
 export function GameOperations() {
   const queryClient = useQueryClient();
@@ -110,7 +139,15 @@ export function GameOperations() {
   const [entryFeeError, setEntryFeeError] = useState<string | null>(null);
   const [isCreateGameModalOpen, setIsCreateGameModalOpen] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState("");
+  const [createOperationMode, setCreateOperationMode] =
+    useState<GameOperationMode>("MANUAL");
+  const [createRegistrationDurationSeconds, setCreateRegistrationDurationSeconds] =
+    useState("60");
+  const [createAutoCallIntervalSeconds, setCreateAutoCallIntervalSeconds] =
+    useState("7");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
+  const [defaultOperationMode, setDefaultOperationMode] =
+    useState<GameOperationMode>("MANUAL");
 
   // Call Number Modal State
   const [isCallNumberModalOpen, setIsCallNumberModalOpen] = useState(false);
@@ -143,12 +180,21 @@ export function GameOperations() {
     isLoading,
     error,
     refetch,
+    isFetching,
   } = useQuery({
     queryKey: operationsQueryKey,
     queryFn: getCurrentGameOperations,
     refetchOnWindowFocus: true,
-    staleTime: 0,
+    staleTime: 2_000,
     refetchInterval: false,
+    placeholderData: keepPreviousData,
+    retry: (failureCount, queryError) => {
+      if (queryError instanceof ApiError && queryError.statusCode === 429) {
+        return false;
+      }
+
+      return failureCount < 1;
+    },
   });
 
   // Extract canonical sections from backend response
@@ -172,7 +218,36 @@ export function GameOperations() {
   const registrationOpenGame = operations?.registrationOpenGame;
   const queue = operations?.queue ?? [];
   const liveSessionId = liveGame?.sessionId ?? null;
-  const pollOperationsFallback = !!liveGame || !socketConnected;
+  const pollOperationsFallback = !socketConnected;
+  const isRateLimited = isApiRateLimitError(error);
+  const invalidateDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const scheduleOperationsRefresh = useCallback(
+    (immediate = false) => {
+      if (invalidateDebounceRef.current) {
+        clearTimeout(invalidateDebounceRef.current);
+        invalidateDebounceRef.current = null;
+      }
+
+      const refresh = () => {
+        void queryClient.invalidateQueries({ queryKey: operationsQueryKey });
+        void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
+      };
+
+      if (immediate) {
+        refresh();
+        return;
+      }
+
+      invalidateDebounceRef.current = setTimeout(() => {
+        invalidateDebounceRef.current = null;
+        refresh();
+      }, OPERATIONS_INVALIDATE_DEBOUNCE_MS);
+    },
+    [queryClient],
+  );
 
   useEffect(() => {
     return socketService.onConnectionChange(setSocketConnected);
@@ -196,6 +271,8 @@ export function GameOperations() {
       : ["games", "called-numbers", "none"],
     queryFn: () => getGameCalledNumbers(liveSessionId!),
     enabled: !!liveSessionId,
+    staleTime: 5_000,
+    placeholderData: keepPreviousData,
   });
 
   const liveCalledNumbers = liveCalledNumbersData?.calledNumbers ?? [];
@@ -203,6 +280,51 @@ export function GameOperations() {
   const autoCallIntervalSec = Math.round(
     (liveGame?.autoCallIntervalMs ?? 7000) / 1000,
   );
+
+  const hasAutoQueue =
+    registrationOpenGame?.operationMode === "AUTO" ||
+    liveGame?.operationMode === "AUTO" ||
+    queue.some((game) => game.operationMode === "AUTO");
+
+  const nextAutoGame = useMemo(() => {
+    if (registrationOpenGame?.operationMode === "AUTO") {
+      return registrationOpenGame;
+    }
+
+    return queue.find((game) => game.operationMode === "AUTO") ?? null;
+  }, [registrationOpenGame, queue]);
+
+  const autoQueueStatus = useMemo(() => {
+    if (!hasAutoQueue) {
+      return null;
+    }
+
+    if (liveGame?.operationMode === "AUTO") {
+      return {
+        label: "Auto queue running",
+        detail: "Live AUTO game in progress",
+      };
+    }
+
+    if (registrationOpenGame?.operationMode === "AUTO") {
+      return {
+        label: "Auto queue running",
+        detail: "Registration open for the next AUTO game",
+      };
+    }
+
+    if (nextAutoGame) {
+      return {
+        label: "Auto queue running",
+        detail: "Waiting to open the next AUTO game in queue",
+      };
+    }
+
+    return {
+      label: "Auto queue running",
+      detail: "AUTO games are queued",
+    };
+  }, [hasAutoQueue, liveGame, registrationOpenGame, nextAutoGame]);
 
   const reorderableSlots = useMemo(() => {
     const slots = [
@@ -244,54 +366,84 @@ export function GameOperations() {
       const response = await getAdminBingoClaims(1, 10);
       return response.items.filter((c: AdminBingoClaim) => c.status === "PENDING");
     },
-    refetchInterval: 5000,
+    refetchInterval: socketConnected ? false : 5000,
     enabled: !!checkingGame && isManualChecking,
   });
 
-  // Socket listeners - refetch canonical endpoint on any game operation
   useEffect(() => {
-    const handleOperationUpdate = () => {
-      queryClient.invalidateQueries({ queryKey: operationsQueryKey });
-      queryClient.invalidateQueries({ queryKey: ["games", "called-numbers"] });
-      queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
+    const handleNumberCalled = (payload: unknown) => {
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+
+      appendCalledNumberToCache(queryClient, payload as CalledNumber);
     };
 
-    socketService.on("connect", handleOperationUpdate);
-    socketService.on("game:operation_updated", handleOperationUpdate);
-    socketService.on("game:number_called", handleOperationUpdate);
-    socketService.on("game:bingo_claimed", handleOperationUpdate);
-    socketService.on("game:winner_window_started", handleOperationUpdate);
-    socketService.on("game:winner_window_joined", handleOperationUpdate);
-    socketService.on("game:finished", handleOperationUpdate);
-    socketService.on("session:prize_updated", handleOperationUpdate);
-    socketService.on("slot:status_changed", handleOperationUpdate);
+    const handleOperationUpdated = (payload: unknown) => {
+      const result = applySocketOperationUpdate(queryClient, payload);
+      if (result === "refresh") {
+        scheduleOperationsRefresh(true);
+      }
+    };
+
+    const handleStructuralRefresh = () => {
+      scheduleOperationsRefresh(true);
+    };
+
+    socketService.on("connect", handleStructuralRefresh);
+    socketService.on("game:operation_updated", handleOperationUpdated);
+    socketService.on("game:number_called", handleNumberCalled);
+    socketService.on("game:bingo_claimed", handleStructuralRefresh);
+    socketService.on("game:winner_window_started", handleStructuralRefresh);
+    socketService.on("game:winner_window_joined", handleStructuralRefresh);
+    socketService.on("game:finished", handleStructuralRefresh);
+    socketService.on("session:prize_updated", handleStructuralRefresh);
+    socketService.on("slot:status_changed", handleStructuralRefresh);
 
     return () => {
-      socketService.off("connect", handleOperationUpdate);
-      socketService.off("game:operation_updated", handleOperationUpdate);
-      socketService.off("game:number_called", handleOperationUpdate);
-      socketService.off("game:bingo_claimed", handleOperationUpdate);
-      socketService.off("game:winner_window_started", handleOperationUpdate);
-      socketService.off("game:winner_window_joined", handleOperationUpdate);
-      socketService.off("game:finished", handleOperationUpdate);
-      socketService.off("session:prize_updated", handleOperationUpdate);
-      socketService.off("slot:status_changed", handleOperationUpdate);
+      if (invalidateDebounceRef.current) {
+        clearTimeout(invalidateDebounceRef.current);
+      }
+
+      socketService.off("connect", handleStructuralRefresh);
+      socketService.off("game:operation_updated", handleOperationUpdated);
+      socketService.off("game:number_called", handleNumberCalled);
+      socketService.off("game:bingo_claimed", handleStructuralRefresh);
+      socketService.off("game:winner_window_started", handleStructuralRefresh);
+      socketService.off("game:winner_window_joined", handleStructuralRefresh);
+      socketService.off("game:finished", handleStructuralRefresh);
+      socketService.off("session:prize_updated", handleStructuralRefresh);
+      socketService.off("slot:status_changed", handleStructuralRefresh);
     };
-  }, [queryClient]);
+  }, [queryClient, scheduleOperationsRefresh]);
+
+  useEffect(() => {
+    setDefaultOperationMode(readStoredDefaultOperationMode(window.localStorage));
+  }, []);
 
   const openCreateGameModal = () => {
     setCreateGameError(null);
+    const defaults = getCreateFormDefaults(defaultOperationMode);
+    setCreateOperationMode(defaults.operationMode);
+    setCreateRegistrationDurationSeconds(defaults.registrationDurationSeconds);
+    setCreateAutoCallIntervalSeconds(defaults.autoCallIntervalSeconds);
     setIsCreateGameModalOpen(true);
   };
 
+  const handleDefaultOperationModeChange = (mode: GameOperationMode) => {
+    setDefaultOperationMode(mode);
+    writeStoredDefaultOperationMode(window.localStorage, mode);
+  };
+
   const createGame = useAdminMutation({
-    mutationFn: (gameRuleId: string) => createAdminGame({ gameRuleId }),
+    mutationFn: (payload: CreateGamePayload) => createAdminGame(payload),
     successMessage: "Game added to queue.",
     errorMessage: "Could not add the game to the queue.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
     onSuccess: () => {
       setIsCreateGameModalOpen(false);
       setCreateGameError(null);
+      scheduleOperationsRefresh(true);
     },
     onError: (error) => {
       setCreateGameError(
@@ -304,16 +456,20 @@ export function GameOperations() {
     mutationFn: (gameId: string) => startAdminGame(gameId),
     successMessage: "Game started.",
     errorMessage: "Failed to start game.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      scheduleOperationsRefresh(true);
+    },
   });
 
   const cancelLiveSession = useAdminMutation({
     mutationFn: (sessionId: string) => cancelBlockingSession(sessionId),
     successMessage: "Live game cancelled.",
     errorMessage: "Failed to cancel live game.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
     onSuccess: () => {
       setCancelLiveOpen(false);
+      scheduleOperationsRefresh(true);
     },
   });
 
@@ -322,9 +478,10 @@ export function GameOperations() {
       updateAdminGameStatus(slotId, { status: "CANCELLED" }),
     successMessage: "Queued game cancelled.",
     errorMessage: "Failed to cancel queued game.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
     onSuccess: () => {
       setCancelQueuedTarget(null);
+      scheduleOperationsRefresh(true);
     },
   });
 
@@ -338,11 +495,43 @@ export function GameOperations() {
     }) => callAdminGameNumber(sessionId, payload),
     successMessage: "Number called.",
     errorMessage: "Failed to call number.",
-    invalidateQueryKeys: [operationsQueryKey, ["games", "called-numbers"]],
+    invalidateQueryKeys: [],
+    onMutate: async ({ sessionId, payload }) => {
+      await queryClient.cancelQueries({ queryKey: operationsQueryKey });
+
+      const previousOperations =
+        queryClient.getQueryData<GameOperationsCurrentResponse>(operationsQueryKey);
+      const previousCalledNumbers = liveSessionId
+        ? queryClient.getQueryData(calledNumbersQueryKey(liveSessionId))
+        : undefined;
+      const nextOrder =
+        (liveCalledNumbers.length || liveGame?.calledNumbersCount || 0) + 1;
+      const optimisticCalledNumber = createOptimisticCalledNumber(
+        sessionId,
+        payload,
+        nextOrder,
+      );
+
+      appendCalledNumberToCache(queryClient, optimisticCalledNumber);
+
+      return { previousOperations, previousCalledNumbers, liveSessionId };
+    },
     onSuccess: () => {
       setCallNumberError(null);
+      scheduleOperationsRefresh(true);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previousOperations) {
+        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+      }
+
+      if (context?.liveSessionId && context.previousCalledNumbers) {
+        queryClient.setQueryData(
+          calledNumbersQueryKey(context.liveSessionId),
+          context.previousCalledNumbers,
+        );
+      }
+
       setCallNumberError(getApiErrorMessage(error, "Failed to call number"));
     },
   });
@@ -351,7 +540,14 @@ export function GameOperations() {
     mutationFn: (sessionId: string) => startSessionAutoCall(sessionId),
     successMessage: "Auto-call started.",
     errorMessage: "Failed to start auto-call.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: (sessionId) => {
+      patchOperationsCache(queryClient, {
+        sessionId,
+        autoCallEnabled: true,
+        updatedReason: "auto_call_changed",
+      });
+    },
     onSuccess: () => {
       setCallNumberError(null);
     },
@@ -364,7 +560,14 @@ export function GameOperations() {
     mutationFn: (sessionId: string) => stopSessionAutoCall(sessionId),
     successMessage: "Auto-call stopped.",
     errorMessage: "Failed to stop auto-call.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: (sessionId) => {
+      patchOperationsCache(queryClient, {
+        sessionId,
+        autoCallEnabled: false,
+        updatedReason: "auto_call_changed",
+      });
+    },
     onSuccess: () => {
       setCallNumberError(null);
     },
@@ -377,9 +580,18 @@ export function GameOperations() {
     mutationFn: approveAdminBingoClaim,
     successMessage: "Bingo claim approved.",
     errorMessage: "Failed to approve bingo claim.",
-    invalidateQueryKeys: [bingoClaimsQueryKey, operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: (claimId) => ({
+      previousClaims: optimisticallyRemoveBingoClaim(queryClient, claimId),
+    }),
     onSuccess: () => {
       setApproveClaimTarget(null);
+      scheduleOperationsRefresh(true);
+    },
+    onError: (_error, claimId, context) => {
+      if (context?.previousClaims) {
+        queryClient.setQueryData(bingoClaimsQueryKey, context.previousClaims);
+      }
     },
   });
 
@@ -388,9 +600,18 @@ export function GameOperations() {
       rejectAdminBingoClaim(claimId, reason),
     successMessage: "Bingo claim rejected.",
     errorMessage: "Failed to reject bingo claim.",
-    invalidateQueryKeys: [bingoClaimsQueryKey, operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: ({ claimId }) => ({
+      previousClaims: optimisticallyRemoveBingoClaim(queryClient, claimId),
+    }),
     onSuccess: () => {
       setRejectClaimTarget(null);
+      scheduleOperationsRefresh(true);
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousClaims) {
+        queryClient.setQueryData(bingoClaimsQueryKey, context.previousClaims);
+      }
     },
   });
 
@@ -399,7 +620,10 @@ export function GameOperations() {
       updateAdminSlotEntryFee(gameId, entryFee),
     successMessage: "Entry fee updated.",
     errorMessage: "Could not update the entry fee.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: ({ gameId, entryFee }) => ({
+      previousOperations: optimisticallyPatchEntryFee(queryClient, gameId, entryFee),
+    }),
     onSuccess: (_, { gameId }) => {
       setSelectedGameForEdit(null);
       setEntryFeeError(null);
@@ -408,8 +632,13 @@ export function GameOperations() {
         delete next[gameId];
         return next;
       });
+      scheduleOperationsRefresh(true);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previousOperations) {
+        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+      }
+
       setEntryFeeError(
         getApiErrorMessage(error, "Could not update the entry fee."),
       );
@@ -420,7 +649,18 @@ export function GameOperations() {
     mutationFn: reorderAdminSlots,
     successMessage: "Queue order updated.",
     errorMessage: "Failed to reorder queue.",
-    invalidateQueryKeys: [operationsQueryKey],
+    invalidateQueryKeys: [],
+    onMutate: (slotIds) => ({
+      previousOperations: optimisticallyReorderQueue(queryClient, slotIds),
+    }),
+    onSuccess: () => {
+      scheduleOperationsRefresh(true);
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousOperations) {
+        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+      }
+    },
     onSettled: () => {
       setReorderAction(null);
     },
@@ -483,11 +723,11 @@ export function GameOperations() {
     }));
   };
 
-  if (isLoading) {
+  if (isLoading && !operations) {
     return <GameOperationsSkeleton />;
   }
 
-  if (error) {
+  if (error && !operations && !isRateLimited) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
         <p className="font-medium">Failed to load game operations</p>
@@ -500,13 +740,56 @@ export function GameOperations() {
     );
   }
 
+  if (error && !operations && isRateLimited) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Game operations sync is temporarily paused. Please wait a moment and
+          refresh.
+        </div>
+        <Button onClick={() => refetch()} variant="outline" size="sm">
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Game Operations"
-        description="Manage live games, registrations, and queue"
-        className="hidden sm:block"
-      />
+      <div className="flex flex-col gap-4">
+        <PageHeader
+          title="Game Operations"
+          description="Manage live games, registrations, and queue"
+          className="hidden sm:block"
+        />
+
+        <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
+          <OperationModeHeaderControl
+            value={defaultOperationMode}
+            onChange={handleDefaultOperationModeChange}
+          />
+          <Button onClick={openCreateGameModal} className="shrink-0 self-start">
+            <Plus className="mr-2 h-4 w-4" />
+            Add Game to Queue
+          </Button>
+        </div>
+      </div>
+
+      {autoQueueStatus ? (
+        <AutoQueueStatusCard
+          status={autoQueueStatus}
+          nextAutoGame={nextAutoGame}
+          liveGame={liveGame ?? null}
+        />
+      ) : null}
+
+      {isRateLimited ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          Sync paused briefly. Showing the last loaded game state
+          {isFetching ? " while retrying…" : "."}
+        </div>
+      ) : null}
 
       {!socketConnected ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
@@ -612,18 +895,27 @@ export function GameOperations() {
                     {(liveGame.winnerPayoutsSummary?.length ??
                       liveGame.winnerCartelasSummary?.length ??
                       0) > 0 ? (
-                      <p className="mt-2 text-sm text-violet-900">
-                        Winners so far:{" "}
-                        {(liveGame.winnerPayoutsSummary ??
-                          liveGame.winnerCartelasSummary ??
-                          [])
-                          .map((winner) =>
-                            "amount" in winner && winner.amount
-                              ? `#${winner.cartelaNumber} — ${winner.amount} ETB`
-                              : `#${winner.cartelaNumber}`,
-                          )
-                          .join(", ")}
-                      </p>
+                      <div className="mt-3 space-y-1">
+                        <p className="text-sm font-medium text-violet-900">
+                          Winners per cartela
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {(liveGame.winnerPayoutsSummary ??
+                            liveGame.winnerCartelasSummary ??
+                            []).map((winner) => (
+                            <Badge
+                              key={`${winner.cartelaId}-${winner.cartelaNumber}`}
+                              variant="outline"
+                              className="border-violet-300 bg-white text-violet-900"
+                            >
+                              #{winner.cartelaNumber}
+                              {"amount" in winner && winner.amount
+                                ? ` · ${formatCurrency(winner.amount)}`
+                                : ""}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <p className="mt-2 text-sm text-violet-800">
                         No winner cartelas recorded yet.
@@ -759,6 +1051,11 @@ export function GameOperations() {
                   <Badge className="bg-blue-100 text-blue-800">
                     {registrationOpenGame.rawStatus === "NEXT" ? "NEW" : "READY"}
                   </Badge>
+                  {registrationOpenGame.operationMode === "AUTO" ? (
+                    <Badge variant="outline" className="border-blue-300 text-blue-700">
+                      Automatic
+                    </Badge>
+                  ) : null}
                 </div>
                 <CardDescription className="text-blue-900/70">
                   {liveGame
@@ -793,27 +1090,45 @@ export function GameOperations() {
                   <Ban className="mr-2 h-4 w-4" />
                   Cancel
                 </LoadingButton>
-                <LoadingButton
-                  size="sm"
-                  onClick={() => startGame.mutate(registrationOpenGame.slotId)}
-                  isLoading={isMutationPendingFor(
-                    startGame,
-                    registrationOpenGame.slotId,
-                  )}
-                  loadingLabel="Starting..."
-                  disabled={!!liveGame}
-                  className="bg-blue-600 hover:bg-blue-700"
-                  title={liveGame ? "Finish or cancel the live game first" : undefined}
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  Start Game
-                </LoadingButton>
+                {registrationOpenGame.operationMode === "AUTO" ? (
+                  <Badge
+                    variant="outline"
+                    className="border-blue-300 bg-white text-blue-700"
+                  >
+                    <Clock3 className="mr-1 h-3.5 w-3.5" />
+                    Auto starts soon
+                  </Badge>
+                ) : (
+                  <LoadingButton
+                    size="sm"
+                    onClick={() => startGame.mutate(registrationOpenGame.slotId)}
+                    isLoading={isMutationPendingFor(
+                      startGame,
+                      registrationOpenGame.slotId,
+                    )}
+                    loadingLabel="Starting..."
+                    disabled={!!liveGame}
+                    className="bg-blue-600 hover:bg-blue-700"
+                    title={
+                      liveGame ? "Finish or cancel the live game first" : undefined
+                    }
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Start Game
+                  </LoadingButton>
+                )}
               </div>
             </div>
             <p className="text-sm text-muted-foreground">
               {registrationOpenGame.gameRule?.name || "Game"} • {registrationOpenGame.staticCode}
               {registrationOpenGame.playCode && ` / ${registrationOpenGame.playCode}`}
             </p>
+            {registrationOpenGame.operationMode === "AUTO" &&
+            registrationOpenGame.scheduledStartAt ? (
+              <RegistrationCountdown
+                scheduledStartAt={registrationOpenGame.scheduledStartAt}
+              />
+            ) : null}
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 md:grid-cols-3">
@@ -901,7 +1216,7 @@ export function GameOperations() {
             <p className="mb-4 text-sm text-muted-foreground">
               Create a new game to get started
             </p>
-            <Button onClick={openCreateGameModal}>
+            <Button onClick={openCreateGameModal} variant="outline">
               <Plus className="mr-2 h-4 w-4" />
               Add Game to Queue
             </Button>
@@ -939,6 +1254,14 @@ export function GameOperations() {
                         <Badge variant="outline" className="text-xs">
                           {game.rawStatus === "READY" ? "Ready" : "New"}
                         </Badge>
+                        {game.operationMode === "AUTO" ? (
+                          <Badge
+                            variant="outline"
+                            className="border-blue-300 text-xs text-blue-700"
+                          >
+                            Auto
+                          </Badge>
+                        ) : null}
                       </div>
                       <p className="text-sm text-muted-foreground">
                         {game.staticCode} • Entry: {formatCurrency(game.entryFee)} •
@@ -976,16 +1299,6 @@ export function GameOperations() {
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Add Game Button (when games exist) */}
-      {(liveGame || checkingGame || registrationOpenGame || queue.length > 0) && (
-        <div className="flex justify-end">
-          <Button onClick={openCreateGameModal}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Game to Queue
-          </Button>
-        </div>
       )}
 
       <Dialog
@@ -1028,6 +1341,63 @@ export function GameOperations() {
               ) : null}
             </div>
 
+            <div className="space-y-2">
+              <Label>Operation Mode</Label>
+              <p className="text-xs text-muted-foreground">
+                Default: {defaultOperationMode === "MANUAL" ? "Manual" : "Automatic"}
+                . You can override for this game.
+              </p>
+              <Select
+                value={createOperationMode}
+                onValueChange={(value) =>
+                  setCreateOperationMode(value as GameOperationMode)
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MANUAL">Manual</SelectItem>
+                  <SelectItem value="AUTO">Automatic</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {createOperationMode === "AUTO" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="registration-duration">
+                    Registration Duration (seconds)
+                  </Label>
+                  <Input
+                    id="registration-duration"
+                    type="number"
+                    min={10}
+                    max={600}
+                    value={createRegistrationDurationSeconds}
+                    onChange={(event) =>
+                      setCreateRegistrationDurationSeconds(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="auto-call-interval">
+                    Auto-call Interval (seconds)
+                  </Label>
+                  <Input
+                    id="auto-call-interval"
+                    type="number"
+                    min={3}
+                    max={60}
+                    value={createAutoCallIntervalSeconds}
+                    onChange={(event) =>
+                      setCreateAutoCallIntervalSeconds(event.target.value)
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+
             {createGameError ? (
               <p className="text-sm text-destructive">{createGameError}</p>
             ) : null}
@@ -1046,7 +1416,48 @@ export function GameOperations() {
                   setCreateGameError("Select a game rule first.");
                   return;
                 }
-                createGame.mutate(selectedRuleId);
+
+                const registrationDurationSeconds = Number(
+                  createRegistrationDurationSeconds,
+                );
+                const autoCallIntervalSeconds = Number(
+                  createAutoCallIntervalSeconds,
+                );
+
+                if (
+                  createOperationMode === "AUTO" &&
+                  (!Number.isFinite(registrationDurationSeconds) ||
+                    registrationDurationSeconds < 10 ||
+                    registrationDurationSeconds > 600)
+                ) {
+                  setCreateGameError(
+                    "Registration duration must be between 10 and 600 seconds.",
+                  );
+                  return;
+                }
+
+                if (
+                  createOperationMode === "AUTO" &&
+                  (!Number.isFinite(autoCallIntervalSeconds) ||
+                    autoCallIntervalSeconds < 3 ||
+                    autoCallIntervalSeconds > 60)
+                ) {
+                  setCreateGameError(
+                    "Auto-call interval must be between 3 and 60 seconds.",
+                  );
+                  return;
+                }
+
+                createGame.mutate({
+                  gameRuleId: selectedRuleId,
+                  operationMode: createOperationMode,
+                  ...(createOperationMode === "AUTO"
+                    ? {
+                        registrationDurationSeconds,
+                        autoCallIntervalSeconds,
+                      }
+                    : {}),
+                });
               }}
               isLoading={createGame.isPending}
               loadingLabel="Adding..."
@@ -1633,4 +2044,174 @@ function getRandomCallNumber(remaining: number[]): CallNumberPayload | null {
 
 function isValidCalledNumber(n: number): boolean {
   return n >= 1 && n <= 75;
+}
+
+function OperationModeHeaderControl({
+  value,
+  onChange,
+}: {
+  value: GameOperationMode;
+  onChange: (mode: GameOperationMode) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-sm font-medium">Operation mode</Label>
+      <div
+        className={cn(
+          "inline-flex rounded-lg border p-1",
+          value === "AUTO"
+            ? "border-blue-200 bg-blue-50/60"
+            : "border-slate-200 bg-slate-50/80",
+        )}
+      >
+        <OperationModeSegmentButton
+          mode="MANUAL"
+          active={value === "MANUAL"}
+          label="Manual"
+          onClick={() => onChange("MANUAL")}
+        />
+        <OperationModeSegmentButton
+          mode="AUTO"
+          active={value === "AUTO"}
+          label="Automatic"
+          onClick={() => onChange("AUTO")}
+        />
+      </div>
+      <p
+        className={cn(
+          "text-xs",
+          value === "AUTO" ? "text-blue-800/80" : "text-slate-600",
+        )}
+      >
+        {getOperationModeHint(value)}
+      </p>
+    </div>
+  );
+}
+
+function OperationModeSegmentButton({
+  mode,
+  active,
+  label,
+  onClick,
+}: {
+  mode: GameOperationMode;
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+        mode === "MANUAL" &&
+          (active
+            ? "bg-slate-700 text-white shadow-sm"
+            : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"),
+        mode === "AUTO" &&
+          (active
+            ? "bg-blue-600 text-white shadow-sm"
+            : "text-blue-600/70 hover:bg-blue-100 hover:text-blue-800"),
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+function AutoQueueStatusCard({
+  status,
+  nextAutoGame,
+  liveGame,
+}: {
+  status: { label: string; detail: string };
+  nextAutoGame: GameOperationsCurrentResponse["registrationOpenGame"];
+  liveGame: GameOperationsCurrentResponse["liveGame"];
+}) {
+  return (
+    <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-slate-50">
+      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Radio className="h-4 w-4 animate-pulse text-blue-600" />
+            <p className="font-semibold text-blue-950">{status.label}</p>
+            <Badge variant="outline" className="border-blue-300 text-blue-700">
+              AUTO
+            </Badge>
+          </div>
+          <p className="text-sm text-blue-900/80">{status.detail}</p>
+        </div>
+
+        {nextAutoGame ? (
+          <div className="rounded-lg border border-blue-200 bg-white px-4 py-3 text-sm">
+            <p className="font-medium text-blue-950">Next AUTO game</p>
+            <p className="text-blue-900">
+              {nextAutoGame.gameRule?.name || "Game"} • {nextAutoGame.staticCode}
+              {nextAutoGame.playCode ? ` / ${nextAutoGame.playCode}` : ""}
+            </p>
+            {nextAutoGame.scheduledStartAt ? (
+              <RegistrationCountdown
+                scheduledStartAt={nextAutoGame.scheduledStartAt}
+                className="mt-1"
+              />
+            ) : liveGame ? (
+              <p className="mt-1 text-muted-foreground">
+                Opens after the current live game finishes
+              </p>
+            ) : (
+              <p className="mt-1 text-muted-foreground">
+                Registration opens automatically
+              </p>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RegistrationCountdown({
+  scheduledStartAt,
+  className,
+}: {
+  scheduledStartAt: string;
+  className?: string;
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(() =>
+    getSecondsUntil(scheduledStartAt),
+  );
+
+  useEffect(() => {
+    setSecondsLeft(getSecondsUntil(scheduledStartAt));
+    const timer = window.setInterval(() => {
+      setSecondsLeft(getSecondsUntil(scheduledStartAt));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [scheduledStartAt]);
+
+  if (secondsLeft <= 0) {
+    return (
+      <p className={cn("text-sm font-medium text-blue-700", className)}>
+        Registration closing...
+      </p>
+    );
+  }
+
+  return (
+    <p className={cn("text-sm font-medium text-blue-700", className)}>
+      Registration closes in {secondsLeft}s
+    </p>
+  );
+}
+
+function getSecondsUntil(isoDate: string): number {
+  const target = new Date(isoDate).getTime();
+  if (Number.isNaN(target)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.ceil((target - Date.now()) / 1000));
 }

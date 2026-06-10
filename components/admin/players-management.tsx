@@ -32,6 +32,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -41,16 +48,20 @@ import {
 } from "@/components/ui/table";
 
 const pageSize = 20;
-const usersQueryKey = (page: number) => ["admin", "users", page] as const;
+type UserRoleFilter = "PLAYER" | "ADMIN";
+
+const usersQueryKey = (page: number, role: UserRoleFilter) =>
+  ["admin", "users", page, role] as const;
 const userDetailQueryKey = (userId: string) => ["admin", "users", userId] as const;
 
 export function PlayersManagement() {
   const [page, setPage] = useState(1);
+  const [roleFilter, setRoleFilter] = useState<UserRoleFilter>("PLAYER");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const usersQuery = useQuery({
-    queryKey: usersQueryKey(page),
-    queryFn: () => getAdminUsers(page, pageSize),
+    queryKey: usersQueryKey(page, roleFilter),
+    queryFn: () => getAdminUsers(page, pageSize, roleFilter),
   });
 
   const userDetailQuery = useQuery({
@@ -76,13 +87,30 @@ export function PlayersManagement() {
                 balance, and a drill-down view for operational support.
               </CardDescription>
             </div>
-            <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
-              <div className="font-medium text-foreground">
-                {usersQuery.data?.pagination.totalItems.toLocaleString() ?? "0"}{" "}
-                total users
-              </div>
-              <div className="text-muted-foreground">
-                Paginated for quick admin lookup
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Select
+                value={roleFilter}
+                onValueChange={(value) => {
+                  setRoleFilter(value as UserRoleFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Filter by role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PLAYER">Players</SelectItem>
+                  <SelectItem value="ADMIN">Admins</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
+                <div className="font-medium text-foreground">
+                  {usersQuery.data?.pagination.totalItems.toLocaleString() ?? "0"}{" "}
+                  {roleFilter === "ADMIN" ? "admins" : "players"}
+                </div>
+                <div className="text-muted-foreground">
+                  Paginated for quick admin lookup
+                </div>
               </div>
             </div>
           </div>
@@ -102,8 +130,14 @@ export function PlayersManagement() {
             />
           ) : !usersQuery.data || usersQuery.data.items.length === 0 ? (
             <AdminEmptyState
-              title="No players found"
-              description="Player accounts will appear here once people start registering."
+              title={
+                roleFilter === "ADMIN" ? "No admins found" : "No players found"
+              }
+              description={
+                roleFilter === "ADMIN"
+                  ? "Admin accounts will appear here once they are created."
+                  : "Player accounts will appear here once people start registering."
+              }
             />
           ) : (
             <>
@@ -280,6 +314,10 @@ export function PlayersManagement() {
                     <DetailItem
                       label="Game registrations"
                       value={userDetailQuery.data.counts.gameCartelas.toLocaleString()}
+                    />
+                    <DetailItem
+                      label="Winning cartelas"
+                      value={userDetailQuery.data.counts.winnerCartelas.toLocaleString()}
                     />
                     <DetailItem
                       label="Wallet transactions"

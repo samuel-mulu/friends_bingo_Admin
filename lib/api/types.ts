@@ -105,6 +105,7 @@ export interface AdminUserDetail {
     deposits: number;
     withdrawals: number;
     gameCartelas: number;
+    winnerCartelas: number;
     transactions: number;
   };
 }
@@ -215,8 +216,13 @@ export interface AdminGame {
   updatedAt: string;
 }
 
+export type GameOperationMode = "MANUAL" | "AUTO";
+
 export interface CreateGamePayload {
   gameRuleId: string;
+  operationMode?: GameOperationMode;
+  registrationDurationSeconds?: number;
+  autoCallIntervalSeconds?: number;
 }
 
 export interface UpdateGameStatusPayload {
@@ -247,6 +253,24 @@ export interface ReportDateRangeParams {
   to?: string;
 }
 
+export interface AdminExpense {
+  id: string;
+  amount: string;
+  reason: string;
+  note: string | null;
+  expenseDate: string;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateExpensePayload {
+  amount: string;
+  reason: string;
+  note?: string;
+  expenseDate?: string;
+}
+
 export interface FinancialDailyTotal {
   date: string;
   depositsTotal: string;
@@ -254,6 +278,9 @@ export interface FinancialDailyTotal {
   gameEntryTotal: string;
   prizePaidTotal: string;
   netRevenue: string;
+  companyFeeTotal: string;
+  expensesTotal: string;
+  profitNet: string;
 }
 
 export interface FinancialReport {
@@ -262,7 +289,12 @@ export interface FinancialReport {
   gameEntryTotal: string;
   prizePaidTotal: string;
   netRevenue: string;
+  registeredCartelasCount: number;
+  companyFeeTotal: string;
+  expensesTotal: string;
+  profitNet: string;
   transactionCount: number;
+  expenses: AdminExpense[];
   dailyTotals: FinancialDailyTotal[];
 }
 

@@ -1,12 +1,14 @@
 import { apiPaginatedRequest, apiRequest } from "@/lib/api/client";
 import type {
   AdminBingoClaim,
+  AdminExpense,
   AdminGame,
   AdminDeposit,
   AdminSession,
   AdminUserDetail,
   AdminUserListItem,
   AdminWithdrawal,
+  CreateExpensePayload,
   CalledNumbersResponse,
   CallNumberPayload,
   CreateGamePayload,
@@ -39,6 +41,14 @@ export function getFinancialReport(params: ReportDateRangeParams) {
     url: "/admin/reports/financial",
     method: "GET",
     params,
+  });
+}
+
+export function createAdminExpense(payload: CreateExpensePayload) {
+  return apiRequest<AdminExpense>({
+    url: "/admin/expenses",
+    method: "POST",
+    data: payload,
   });
 }
 
@@ -78,6 +88,10 @@ export interface GameOperationItem {
   winnerCartelaId: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  operationMode: "MANUAL" | "AUTO";
+  registrationDurationSeconds: number | null;
+  autoCallIntervalSeconds: number | null;
+  scheduledStartAt: string | null;
   registrationOpen: boolean;
   canStart: boolean;
   canRegister: boolean;
@@ -174,11 +188,15 @@ export function markWithdrawalPaid(withdrawalId: string, payoutRef?: string) {
   });
 }
 
-export function getAdminUsers(page = 1, pageSize = 20) {
+export function getAdminUsers(
+  page = 1,
+  pageSize = 20,
+  role?: "ADMIN" | "PLAYER",
+) {
   return apiPaginatedRequest<AdminUserListItem>({
     url: "/admin/users",
     method: "GET",
-    params: { page, pageSize },
+    params: { page, pageSize, role },
   });
 }
 
