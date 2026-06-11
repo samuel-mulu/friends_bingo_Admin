@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   BadgeCheck,
+  Clock3,
   CreditCard,
   Gamepad2,
   LayoutDashboard,
@@ -28,6 +29,7 @@ export const adminNavigation: NavigationItem[] = [
 ];
 
 export const adminSecondaryNavigation: NavigationItem[] = [
+  { href: "/time-config", label: "Time Config", icon: Clock3 },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

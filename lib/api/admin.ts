@@ -16,9 +16,11 @@ import type {
   GameRuleSummary,
   GamesReport,
   LoginPayload,
+  GameTimingConfig,
   OverviewReport,
   ReportDateRangeParams,
   UpdateGameStatusPayload,
+  UpdateGameTimingConfigPayload,
 } from "@/lib/api/types";
 
 export function loginAdmin(payload: LoginPayload) {
@@ -117,6 +119,7 @@ export interface GameOperationItem {
   } | null;
   autoCallEnabled?: boolean;
   autoCallIntervalMs?: number;
+  nextAutoCallAt?: string | null;
 }
 
 export interface GameOperationsCurrentResponse {
@@ -224,11 +227,10 @@ export function getAdminGames(page = 1, pageSize = 20) {
 }
 
 export function createAdminGame(payload: CreateGamePayload) {
-  // New architecture: create a slot from a game rule id only
   return apiRequest<AdminGame>({
     url: "/admin/slots",
     method: "POST",
-    data: { gameRuleId: payload.gameRuleId },
+    data: payload,
   });
 }
 
@@ -249,6 +251,23 @@ export function updateAdminSlotEntryFee(gameId: string, entryFee: string) {
     url: `/admin/slots/${gameId}/entry-fee`,
     method: "PATCH",
     data: { entryFee },
+  });
+}
+
+export interface UpdateSlotOperationModePayload {
+  operationMode: "MANUAL" | "AUTO";
+  registrationDurationSeconds?: number;
+  autoCallIntervalSeconds?: number;
+}
+
+export function updateAdminSlotOperationMode(
+  slotId: string,
+  payload: UpdateSlotOperationModePayload,
+) {
+  return apiRequest<AdminGame>({
+    url: `/admin/slots/${slotId}/operation-mode`,
+    method: "PATCH",
+    data: payload,
   });
 }
 
@@ -347,5 +366,20 @@ export function rejectAdminBingoClaim(claimId: string, reason: string) {
     url: `/admin/bingo-claims/${claimId}/reject`,
     method: "PATCH",
     data: { reason },
+  });
+}
+
+export function getAdminTimeConfig() {
+  return apiRequest<GameTimingConfig>({
+    url: "/admin/time-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminTimeConfig(payload: UpdateGameTimingConfigPayload) {
+  return apiRequest<GameTimingConfig>({
+    url: "/admin/time-config",
+    method: "PATCH",
+    data: payload,
   });
 }

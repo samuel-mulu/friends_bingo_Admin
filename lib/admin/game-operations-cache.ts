@@ -10,7 +10,12 @@ export const operationsQueryKey = ["games", "operations", "current"] as const;
 export const bingoClaimsQueryKey = ["admin", "bingo-claims", "pending"] as const;
 
 export const calledNumbersQueryKey = (sessionId: string) =>
-  ["games", "called-numbers", sessionId] as const;
+  ["admin", "called-numbers", sessionId] as const;
+
+export type CalledNumbersCache = {
+  totalCount: number;
+  calledNumbers: CalledNumber[];
+};
 
 type OperationSocketPatch = {
   slotId?: string;
@@ -26,8 +31,116 @@ type OperationSocketPatch = {
     order: number;
   } | null;
   autoCallEnabled?: boolean;
+  autoCallIntervalMs?: number | null;
+  nextAutoCallAt?: string | null;
   updatedReason?: string;
+  gameSlotId?: string;
 };
+
+function isSyntheticCalledNumberId(id: string): boolean {
+  return id.startsWith("socket-") || id.startsWith("optimistic-");
+}
+
+function pickPreferredCalledNumber(
+  existing: CalledNumber,
+  incoming: CalledNumber,
+): CalledNumber {
+  if (isSyntheticCalledNumberId(existing.id) && !isSyntheticCalledNumberId(incoming.id)) {
+    return incoming;
+  }
+
+  if (!isSyntheticCalledNumberId(existing.id) && isSyntheticCalledNumberId(incoming.id)) {
+    return existing;
+  }
+
+  return incoming;
+}
+
+export function mergeCalledNumbersLists(
+  ...sources: (CalledNumber[] | undefined)[]
+): CalledNumber[] {
+  const byOrder = new Map<number, CalledNumber>();
+
+  for (const source of sources) {
+    for (const entry of source ?? []) {
+      const existing = byOrder.get(entry.order);
+      if (!existing) {
+        byOrder.set(entry.order, entry);
+        continue;
+      }
+
+      byOrder.set(entry.order, pickPreferredCalledNumber(existing, entry));
+    }
+  }
+
+  return [...byOrder.values()].sort((left, right) => left.order - right.order);
+}
+
+export function mergeCalledNumbersResponse(
+  server: CalledNumbersCache,
+  cached: CalledNumbersCache | undefined,
+): CalledNumbersCache {
+  const calledNumbers = mergeCalledNumbersLists(
+    cached?.calledNumbers,
+    server.calledNumbers,
+  );
+
+  return {
+    totalCount: calledNumbers.length,
+    calledNumbers,
+  };
+}
+
+export function patchOperationsCalledNumberCount(
+  queryClient: QueryClient,
+  sessionId: string,
+  calledNumber: CalledNumber,
+): boolean {
+  return patchOperationsCache(queryClient, {
+    sessionId,
+    calledNumbersCount: calledNumber.order,
+    latestCalledNumber: {
+      letter: calledNumber.letter,
+      number: calledNumber.number,
+      order: calledNumber.order,
+    },
+  });
+}
+
+export function upsertCalledNumber(
+  queryClient: QueryClient,
+  sessionId: string,
+  calledNumber: CalledNumber,
+): CalledNumbersCache {
+  const queryKey = calledNumbersQueryKey(sessionId);
+  const current = queryClient.getQueryData<CalledNumbersCache>(queryKey);
+
+  if (current?.calledNumbers.some((entry) => entry.id === calledNumber.id)) {
+    return current;
+  }
+
+  const calledNumbers = mergeCalledNumbersLists(current?.calledNumbers, [
+    calledNumber,
+  ]);
+  const next: CalledNumbersCache = {
+    totalCount: calledNumbers.length,
+    calledNumbers,
+  };
+
+  queryClient.setQueryData(queryKey, next);
+  return next;
+}
+
+export function logCalledNumberEvent(calledNumber: CalledNumber): void {
+  if (process.env.NODE_ENV === "development") {
+    console.debug("[game:number_called]", {
+      id: calledNumber.id,
+      order: calledNumber.order,
+      number: calledNumber.number,
+      sessionId: calledNumber.gameSessionId,
+    });
+  }
+}
 
 function patchGameItem(
   item: GameOperationItem,
@@ -52,6 +165,12 @@ function patchGameItem(
   }
   if (patch.autoCallEnabled !== undefined) {
     next.autoCallEnabled = patch.autoCallEnabled;
+  }
+  if (patch.autoCallIntervalMs !== undefined && patch.autoCallIntervalMs !== null) {
+    next.autoCallIntervalMs = patch.autoCallIntervalMs;
+  }
+  if (patch.nextAutoCallAt !== undefined) {
+    next.nextAutoCallAt = patch.nextAutoCallAt;
   }
   if (patch.status !== undefined) {
     next.rawStatus = patch.status;
@@ -115,88 +234,50 @@ export function patchOperationsCache(
   return true;
 }
 
-export function appendCalledNumberToCache(
-  queryClient: QueryClient,
-  calledNumber: CalledNumber,
-): void {
-  const sessionId = calledNumber.gameSessionId;
-  const queryKey = calledNumbersQueryKey(sessionId);
+export function normalizeCalledNumberPayload(payload: unknown): CalledNumber | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
 
-  queryClient.setQueryData<{ totalCount: number; calledNumbers: CalledNumber[] }>(
-    queryKey,
-    (current) => {
-      const existing = current?.calledNumbers ?? [];
-      const alreadyPresent = existing.some(
-        (entry) =>
-          entry.id === calledNumber.id ||
-          (entry.letter === calledNumber.letter &&
-            entry.number === calledNumber.number),
-      );
+  const candidate = payload as Partial<CalledNumber> & {
+    sessionId?: string;
+  };
 
-      if (alreadyPresent) {
-        return current;
-      }
+  const gameSessionId = candidate.gameSessionId ?? candidate.sessionId;
+  if (
+    !gameSessionId ||
+    typeof candidate.letter !== "string" ||
+    typeof candidate.number !== "number" ||
+    typeof candidate.order !== "number"
+  ) {
+    return null;
+  }
 
-      const calledNumbers = [...existing, calledNumber];
-
-      return {
-        totalCount: calledNumbers.length,
-        calledNumbers,
-      };
-    },
-  );
-
-  patchOperationsCache(queryClient, {
-    sessionId,
-    calledNumbersCount: calledNumber.order,
-    latestCalledNumber: {
-      letter: calledNumber.letter,
-      number: calledNumber.number,
-      order: calledNumber.order,
-    },
-    updatedReason: "number_called",
-  });
+  return {
+    id: candidate.id ?? `socket-${candidate.order}`,
+    gameSessionId,
+    letter: candidate.letter,
+    number: candidate.number,
+    order: candidate.order,
+    createdAt: candidate.createdAt ?? new Date().toISOString(),
+  };
 }
 
-export function applySocketOperationUpdate(
+export function invalidateOperationsCache(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: operationsQueryKey });
+}
+
+export function refetchCalledNumbersForSession(
   queryClient: QueryClient,
-  payload: unknown,
-): "patched" | "refresh" {
-  if (!payload || typeof payload !== "object") {
-    return "refresh";
+  sessionId: string | null | undefined,
+): void {
+  if (!sessionId) {
+    return;
   }
 
-  const patch = payload as OperationSocketPatch;
-  const updatedReason = patch.updatedReason;
-
-  if (updatedReason === "number_called") {
-    if (patch.sessionId && patch.latestCalledNumber) {
-      appendCalledNumberToCache(queryClient, {
-        id: `socket-${patch.latestCalledNumber.order}`,
-        gameSessionId: patch.sessionId,
-        letter: patch.latestCalledNumber.letter,
-        number: patch.latestCalledNumber.number,
-        order: patch.latestCalledNumber.order,
-        createdAt: new Date().toISOString(),
-      });
-      return "patched";
-    }
-  }
-
-  const hasIncrementalPatch =
-    patch.entryFee !== undefined ||
-    patch.prizeAmount !== undefined ||
-    patch.registeredCartelasCount !== undefined ||
-    patch.calledNumbersCount !== undefined ||
-    patch.latestCalledNumber !== undefined ||
-    patch.autoCallEnabled !== undefined;
-
-  if (hasIncrementalPatch && (patch.slotId || patch.sessionId)) {
-    patchOperationsCache(queryClient, patch);
-    return updatedReason === "auto_call_changed" ? "patched" : "patched";
-  }
-
-  return "refresh";
+  void queryClient.invalidateQueries({
+    queryKey: calledNumbersQueryKey(sessionId),
+  });
 }
 
 export function optimisticallyReorderQueue(

@@ -328,6 +328,37 @@ export interface BingoClaimUserSummary {
   phoneNumber: string;
 }
 
+export interface GameTimingConfig {
+  id: string;
+  registrationDurationSeconds: number;
+  autoCallIntervalSeconds: number;
+  winnerWindowSeconds: number;
+  cartelaHoldSeconds: number;
+  finishedResultDisplaySeconds: number;
+  preparingDisplayMaxSeconds: number | null;
+  missedNumberAnimationMs: number;
+  missedNumberStaggerMaxBalls: number;
+  adminRefreshDebounceMs: number;
+  adminFallbackPollingSeconds: number;
+  flutterRefetchDebounceMs: number;
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface UpdateGameTimingConfigPayload {
+  registrationDurationSeconds?: number;
+  autoCallIntervalSeconds?: number;
+  winnerWindowSeconds?: number;
+  cartelaHoldSeconds?: number;
+  finishedResultDisplaySeconds?: number;
+  preparingDisplayMaxSeconds?: number | null;
+  missedNumberAnimationMs?: number;
+  missedNumberStaggerMaxBalls?: number;
+  adminRefreshDebounceMs?: number;
+  adminFallbackPollingSeconds?: number;
+  flutterRefetchDebounceMs?: number;
+}
+
 export interface AdminBingoClaim {
   id: string;
   gameSessionId: string;
