@@ -116,7 +116,9 @@ import {
   calledNumbersQueryKey,
   type CalledNumbersCache,
   createOptimisticCalledNumber,
+  dropTerminalSessionFromOperationsCache,
   invalidateOperationsCache,
+  isTerminalGameStatus,
   logCalledNumberEvent,
   mergeCalledNumbersResponse,
   normalizeCalledNumberPayload,
@@ -129,6 +131,7 @@ import {
   patchOperationsCache,
   patchOperationsCalledNumberCount,
 } from "@/lib/admin/game-operations-cache";
+import { adminToast } from "@/lib/admin/admin-toast";
 import { socketService } from "@/lib/socket/socket-service";
 import { Button } from "@/components/ui/button";
 import {
@@ -403,6 +406,32 @@ export function GameOperations() {
         )
       : null;
 
+  // Single ticking source for every registration-countdown surface (status
+  // hint, "Auto starts" badge, and the countdown line).
+  const registrationScheduledStartAt =
+    registrationOpenGame?.scheduledStartAt ?? null;
+  const [registrationNow, setRegistrationNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!registrationScheduledStartAt) {
+      return;
+    }
+
+    setRegistrationNow(Date.now());
+    const timer = window.setInterval(() => {
+      setRegistrationNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [registrationScheduledStartAt]);
+
+  const registrationCloseTime = registrationScheduledStartAt
+    ? new Date(registrationScheduledStartAt).getTime()
+    : Number.NaN;
+  const registrationSecondsLeft = Number.isNaN(registrationCloseTime)
+    ? null
+    : Math.max(0, Math.ceil((registrationCloseTime - registrationNow) / 1000));
+
   const hasAutoQueue =
     registrationOpenGame?.operationMode === "AUTO" ||
     currentGame?.operationMode === "AUTO" ||
@@ -510,14 +539,68 @@ export function GameOperations() {
       scheduleOperationsRefresh(false);
     };
 
+    const handleTerminalSession = (payload: unknown) => {
+      if (payload && typeof payload === "object") {
+        const data = payload as {
+          sessionId?: string | null;
+          id?: string | null;
+          slotId?: string | null;
+          gameSlotId?: string | null;
+        };
+        dropTerminalSessionFromOperationsCache(queryClient, {
+          sessionId: data.sessionId ?? data.id ?? null,
+          slotId: data.slotId ?? data.gameSlotId ?? null,
+        });
+      }
+
+      scheduleOperationsRefresh(true);
+    };
+
+    const handleGameCancelled = (payload: unknown) => {
+      if (payload && typeof payload === "object") {
+        const data = payload as {
+          reason?: string | null;
+          refundedCount?: number | null;
+        };
+
+        if (data.reason === "no_players") {
+          adminToast.info("Skipped — no players joined.");
+        } else {
+          const refunded = data.refundedCount ?? 0;
+          adminToast.info(
+            refunded > 0
+              ? `Cancelled — ${refunded} entry fee${refunded === 1 ? "" : "s"} refunded.`
+              : "Game cancelled.",
+          );
+        }
+      }
+
+      handleTerminalSession(payload);
+    };
+
+    const handleStatusChanged = (payload: unknown) => {
+      const status =
+        payload && typeof payload === "object"
+          ? (payload as { status?: string | null }).status
+          : null;
+
+      if (isTerminalGameStatus(status)) {
+        handleTerminalSession(payload);
+        return;
+      }
+
+      handleStructuralRefresh(payload);
+    };
+
     socketService.on("connect", handleReconnectRefresh);
-    socketService.on("game:status_changed", handleStructuralRefresh);
+    socketService.on("game:status_changed", handleStatusChanged);
     socketService.on("game:operation_updated", handleStructuralRefresh);
     socketService.on("game:number_called", handleNumberCalled);
     socketService.on("game:bingo_claimed", handleStructuralRefresh);
     socketService.on("game:winner_window_started", handleStructuralRefresh);
     socketService.on("game:winner_window_joined", handleStructuralRefresh);
-    socketService.on("game:finished", handleStructuralRefresh);
+    socketService.on("game:finished", handleTerminalSession);
+    socketService.on("game:cancelled", handleGameCancelled);
     socketService.on("session:prize_updated", handleStructuralRefresh);
     socketService.on("session:cartelas_updated", handleStructuralRefresh);
     socketService.on("slot:status_changed", handleStructuralRefresh);
@@ -529,13 +612,14 @@ export function GameOperations() {
       }
 
       socketService.off("connect", handleReconnectRefresh);
-      socketService.off("game:status_changed", handleStructuralRefresh);
+      socketService.off("game:status_changed", handleStatusChanged);
       socketService.off("game:operation_updated", handleStructuralRefresh);
       socketService.off("game:number_called", handleNumberCalled);
       socketService.off("game:bingo_claimed", handleStructuralRefresh);
       socketService.off("game:winner_window_started", handleStructuralRefresh);
       socketService.off("game:winner_window_joined", handleStructuralRefresh);
-      socketService.off("game:finished", handleStructuralRefresh);
+      socketService.off("game:finished", handleTerminalSession);
+      socketService.off("game:cancelled", handleGameCancelled);
       socketService.off("session:prize_updated", handleStructuralRefresh);
       socketService.off("session:cartelas_updated", handleStructuralRefresh);
       socketService.off("slot:status_changed", handleStructuralRefresh);
@@ -727,6 +811,7 @@ export function GameOperations() {
     },
     onSuccess: () => {
       setCallNumberError(null);
+      scheduleOperationsRefresh(true);
     },
     onError: (error) => {
       setCallNumberError(getApiErrorMessage(error, "Failed to start auto-call"));
@@ -747,6 +832,7 @@ export function GameOperations() {
     },
     onSuccess: () => {
       setCallNumberError(null);
+      scheduleOperationsRefresh(true);
     },
     onError: (error) => {
       setCallNumberError(getApiErrorMessage(error, "Failed to stop auto-call"));
@@ -975,7 +1061,8 @@ export function GameOperations() {
 
       {!socketConnected ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          Realtime disconnected. Reconnecting and polling game state every 5 seconds.
+          Realtime disconnected. Reconnecting and polling game state every{" "}
+          {Math.round(operationsFallbackPollingMs / 1000)} seconds.
         </div>
       ) : null}
 
@@ -1125,24 +1212,21 @@ export function GameOperations() {
                       Automatic rule validation is active. Other valid claims can
                       still join until the timer ends.
                     </p>
-                    {(currentGame.winnerPayoutsSummary?.length ??
-                      currentGame.winnerCartelasSummary?.length ??
-                      0) > 0 ? (
+                    {(currentGame.winnerPayoutsSummary?.length ?? 0) > 0 ? (
                       <div className="mt-3 space-y-1">
                         <p className="text-sm font-medium text-violet-900">
                           Winners per cartela
                         </p>
                         <div className="flex flex-wrap gap-2">
-                          {(currentGame.winnerPayoutsSummary ??
-                            currentGame.winnerCartelasSummary ??
-                            []).map((winner) => (
+                          {(currentGame.winnerPayoutsSummary ?? []).map(
+                            (winner) => (
                             <Badge
                               key={`${winner.cartelaId}-${winner.cartelaNumber}`}
                               variant="outline"
                               className="border-violet-300 bg-white text-violet-900"
                             >
                               #{winner.cartelaNumber}
-                              {"amount" in winner && winner.amount
+                              {winner.amount
                                 ? ` · ${formatCurrency(winner.amount)}`
                                 : ""}
                             </Badge>
@@ -1311,7 +1395,11 @@ export function GameOperations() {
                     className="border-blue-300 bg-white text-blue-700"
                   >
                     <Clock3 className="mr-1 h-3.5 w-3.5" />
-                    Auto starts soon
+                    {registrationSecondsLeft == null
+                      ? "Auto queued"
+                      : registrationSecondsLeft > 0
+                        ? `Auto starts in ${registrationSecondsLeft}s`
+                        : "Auto starting…"}
                   </Badge>
                 ) : (
                   // Manual Start is hidden for AUTO. Backend still allows
@@ -1350,19 +1438,15 @@ export function GameOperations() {
             <OperationModeStatusHint
               game={registrationOpenGame}
               timing={timeConfig}
-              secondsUntilRegistrationClose={
-                registrationOpenGame.scheduledStartAt
-                  ? getSecondsUntil(registrationOpenGame.scheduledStartAt)
-                  : null
-              }
+              secondsUntilRegistrationClose={registrationSecondsLeft}
               isSameSlotAsCurrentGame={
                 currentGame?.slotId === registrationOpenGame.slotId
               }
             />
             {registrationOpenGame.operationMode === "AUTO" &&
-            registrationOpenGame.scheduledStartAt ? (
+            registrationSecondsLeft != null ? (
               <RegistrationCountdown
-                scheduledStartAt={registrationOpenGame.scheduledStartAt}
+                secondsLeft={registrationSecondsLeft}
                 preparing={
                   currentGame?.slotId === registrationOpenGame.slotId &&
                   (currentGame.playerStatus === "playing" ||
@@ -2487,28 +2571,19 @@ function OperationModeSegmentButton({
   );
 }
 
+/**
+ * Single registration-countdown line. The ticking seconds value is owned by
+ * the parent so every countdown surface (hint, badge, this line) agrees.
+ */
 function RegistrationCountdown({
-  scheduledStartAt,
+  secondsLeft,
   preparing = false,
   className,
 }: {
-  scheduledStartAt: string;
+  secondsLeft: number;
   preparing?: boolean;
   className?: string;
 }) {
-  const [secondsLeft, setSecondsLeft] = useState(() =>
-    getSecondsUntil(scheduledStartAt),
-  );
-
-  useEffect(() => {
-    setSecondsLeft(getSecondsUntil(scheduledStartAt));
-    const timer = window.setInterval(() => {
-      setSecondsLeft(getSecondsUntil(scheduledStartAt));
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [scheduledStartAt]);
-
   if (preparing || secondsLeft <= 0) {
     return (
       <p className={cn("text-sm font-medium text-blue-700", className)}>
@@ -2524,11 +2599,3 @@ function RegistrationCountdown({
   );
 }
 
-function getSecondsUntil(isoDate: string): number {
-  const target = new Date(isoDate).getTime();
-  if (Number.isNaN(target)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.ceil((target - Date.now()) / 1000));
-}

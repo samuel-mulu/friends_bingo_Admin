@@ -87,25 +87,14 @@ export interface GameOperationItem {
   registeredCartelasCount: number;
   calledNumbersCount: number;
   sortOrder: number | null;
-  winnerCartelaId: string | null;
-  startedAt: string | null;
-  finishedAt: string | null;
   operationMode: "MANUAL" | "AUTO";
   registrationDurationSeconds: number | null;
   autoCallIntervalSeconds: number | null;
   scheduledStartAt: string | null;
-  registrationOpen: boolean;
   canStart: boolean;
   canRegister: boolean;
   canCallNumber: boolean;
-  canClaimBingo: boolean;
-  winnerWindowStartedAt?: string | null;
   winnerWindowEndsAt?: string | null;
-  winnerCartelasSummary?: Array<{
-    gameCartelaId: string;
-    cartelaId: string;
-    cartelaNumber: number;
-  }>;
   winnerPayoutsSummary?: Array<{
     cartelaId: string;
     cartelaNumber: number;
@@ -217,15 +206,6 @@ export function getAdminGameRules() {
   });
 }
 
-export function getAdminGames(page = 1, pageSize = 20) {
-  // New architecture: games are queued as slots
-  return apiPaginatedRequest<AdminGame>({
-    url: "/admin/slots",
-    method: "GET",
-    params: { page, pageSize },
-  });
-}
-
 export function createAdminGame(payload: CreateGamePayload) {
   return apiRequest<AdminGame>({
     url: "/admin/slots",
@@ -327,14 +307,6 @@ export function callAdminGameNumber(
     url: `/admin/sessions/${sessionId}/call-number`,
     method: "POST",
     data: payload,
-  });
-}
-
-export function getGameDetail(slotId: string) {
-  // Public endpoint for slot detail
-  return apiRequest<AdminGame>({
-    url: `/games/slots/${slotId}`,
-    method: "GET",
   });
 }
 

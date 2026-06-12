@@ -125,17 +125,6 @@ export function getFocusedGameForModeSwitch(operations: {
   );
 }
 
-/** @deprecated Use getFocusedGameForModeSwitch */
-export function getCurrentGameForModeSwitch(operations: {
-  liveGame: GameOperationItem | null;
-  registrationOpenGame: GameOperationItem | null;
-}): GameOperationItem | null {
-  return getFocusedGameForModeSwitch({
-    ...operations,
-    checkingGame: null,
-  });
-}
-
 export type GameOperationStatusHintContext = {
   secondsUntilNextBall?: number | null;
   secondsUntilRegistrationClose?: number | null;

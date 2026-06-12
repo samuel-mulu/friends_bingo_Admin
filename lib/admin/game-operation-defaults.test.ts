@@ -36,18 +36,13 @@ function createOperationGame(
     registeredCartelasCount: 1,
     calledNumbersCount: 0,
     sortOrder: 1,
-    winnerCartelaId: null,
-    startedAt: null,
-    finishedAt: null,
     operationMode: "MANUAL",
     registrationDurationSeconds: null,
     autoCallIntervalSeconds: null,
     scheduledStartAt: null,
-    registrationOpen: true,
     canStart: true,
     canRegister: true,
     canCallNumber: false,
-    canClaimBingo: false,
     ...overrides,
   };
 }

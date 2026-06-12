@@ -267,6 +267,59 @@ export function invalidateOperationsCache(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: operationsQueryKey });
 }
 
+const TERMINAL_GAME_STATUSES = new Set(["FINISHED", "CANCELLED"]);
+
+export function isTerminalGameStatus(
+  status: string | null | undefined,
+): boolean {
+  return status != null && TERMINAL_GAME_STATUSES.has(status);
+}
+
+/**
+ * Removes a finished/cancelled session from the cached operations buckets so
+ * the UI never keeps showing a dead game while the immediate refetch is in
+ * flight. The queue is left untouched (the slot lives on as a queued entry).
+ */
+export function dropTerminalSessionFromOperationsCache(
+  queryClient: QueryClient,
+  target: { sessionId?: string | null; slotId?: string | null },
+): void {
+  if (!target.sessionId && !target.slotId) {
+    return;
+  }
+
+  const current = queryClient.getQueryData<GameOperationsCurrentResponse>(
+    operationsQueryKey,
+  );
+
+  if (!current) {
+    return;
+  }
+
+  const matches = (item: GameOperationItem | null) =>
+    item != null &&
+    ((target.sessionId != null && item.sessionId === target.sessionId) ||
+      (target.slotId != null && item.slotId === target.slotId));
+
+  if (
+    !matches(current.liveGame) &&
+    !matches(current.checkingGame) &&
+    !matches(current.registrationOpenGame)
+  ) {
+    return;
+  }
+
+  queryClient.setQueryData<GameOperationsCurrentResponse>(operationsQueryKey, {
+    ...current,
+    liveGame: matches(current.liveGame) ? null : current.liveGame,
+    checkingGame: matches(current.checkingGame) ? null : current.checkingGame,
+    registrationOpenGame: matches(current.registrationOpenGame)
+      ? null
+      : current.registrationOpenGame,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 export function refetchCalledNumbersForSession(
   queryClient: QueryClient,
   sessionId: string | null | undefined,

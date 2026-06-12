@@ -4,13 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Clock3, Loader2 } from "lucide-react";
 
-import { getAdminTimeConfig, updateAdminTimeConfig } from "@/lib/api/admin";
+import {
+  getAdminTimeConfig,
+  getCurrentGameOperations,
+  updateAdminSlotOperationMode,
+  updateAdminTimeConfig,
+  type GameOperationItem,
+} from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type {
   GameTimingConfig,
   UpdateGameTimingConfigPayload,
 } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/formatters";
+import { getFocusedGameForModeSwitch } from "@/lib/admin/game-operation-defaults";
+import { operationsQueryKey } from "@/lib/admin/game-operations-cache";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { LoadingButton } from "@/components/admin/loading-button";
 import {
@@ -47,21 +55,21 @@ const gameAutomationFields: TimingField[] = [
   {
     key: "registrationDurationSeconds",
     label: "Registration duration (seconds)",
-    hint: "AUTO mode registration window for new games.",
+    hint: "AUTO mode registration window. Affects future countdowns only, unless explicitly applied to the current game.",
     min: 10,
     max: 600,
   },
   {
     key: "autoCallIntervalSeconds",
     label: "Auto-call interval (seconds)",
-    hint: "Default delay between balls for new AUTO games.",
+    hint: "Delay between balls for AUTO games. Affects future games only, unless explicitly applied to the current game.",
     min: 3,
     max: 60,
   },
   {
     key: "winnerWindowSeconds",
     label: "Winner window (seconds)",
-    hint: "How long other players can claim after the first valid bingo.",
+    hint: "How long other players can claim after the first valid bingo. Affects future winner windows only.",
     min: 5,
     max: 120,
   },
@@ -304,9 +312,38 @@ export function TimeConfigManagement() {
   const saveMutation = useAdminMutation({
     mutationFn: (payload: UpdateGameTimingConfigPayload) =>
       updateAdminTimeConfig(payload),
-    successMessage: "Timing defaults saved.",
+    successMessage: "Timing defaults saved. New games will use these values.",
     errorMessage: "Could not save timing defaults.",
     invalidateQueryKeys: [timeConfigQueryKey],
+  });
+
+  const operationsQuery = useQuery({
+    queryKey: operationsQueryKey,
+    queryFn: getCurrentGameOperations,
+  });
+
+  const focusedGame = operationsQuery.data
+    ? getFocusedGameForModeSwitch(operationsQuery.data)
+    : null;
+
+  const applyToCurrentGameMutation = useAdminMutation({
+    mutationFn: ({
+      game,
+      registrationDurationSeconds,
+      autoCallIntervalSeconds,
+    }: {
+      game: GameOperationItem;
+      registrationDurationSeconds: number;
+      autoCallIntervalSeconds: number;
+    }) =>
+      updateAdminSlotOperationMode(game.slotId, {
+        operationMode: "AUTO",
+        registrationDurationSeconds,
+        autoCallIntervalSeconds,
+      }),
+    successMessage: "Timing applied to the current game.",
+    errorMessage: "Could not apply timing to the current game.",
+    invalidateQueryKeys: [operationsQueryKey],
   });
 
   const allFields = useMemo(
@@ -352,6 +389,35 @@ export function TimeConfigManagement() {
     }
 
     saveMutation.mutate(payload);
+  };
+
+  const canApplyToCurrentGame =
+    focusedGame != null && focusedGame.operationMode === "AUTO";
+
+  const applyToCurrentGameHint = !focusedGame
+    ? "No active game right now."
+    : focusedGame.operationMode !== "AUTO"
+      ? "The current game is in Manual mode; timing does not apply."
+      : focusedGame.playerStatus === "registrationOpen"
+        ? "Restarts the registration countdown with the duration above and updates the auto-call interval."
+        : "Updates the auto-call interval of the live game immediately.";
+
+  const handleApplyToCurrentGame = () => {
+    if (!draft || !focusedGame || !canApplyToCurrentGame) {
+      return;
+    }
+
+    const validationError = validateDraft(draft, gameAutomationFields);
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
+    applyToCurrentGameMutation.mutate({
+      game: focusedGame,
+      registrationDurationSeconds: Number(draft.registrationDurationSeconds),
+      autoCallIntervalSeconds: Number(draft.autoCallIntervalSeconds),
+    });
   };
 
   if (timeConfigQuery.isLoading) {
@@ -436,6 +502,30 @@ export function TimeConfigManagement() {
         draft={draft}
         onChange={handleFieldChange}
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Apply to current game</CardTitle>
+          <CardDescription>
+            Saving defaults never changes a game that is already running. Use
+            this to explicitly copy the registration duration and auto-call
+            interval above onto the active game.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {applyToCurrentGameHint}
+          </p>
+          <LoadingButton
+            variant="outline"
+            isLoading={applyToCurrentGameMutation.isPending}
+            disabled={!canApplyToCurrentGame}
+            onClick={handleApplyToCurrentGame}
+          >
+            Apply to current game
+          </LoadingButton>
+        </CardContent>
+      </Card>
 
       {formError ? (
         <AdminEmptyState title="Could not save" description={formError} />
