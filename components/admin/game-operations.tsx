@@ -90,8 +90,6 @@ import {
   getApplyOperationModePrompt,
   getCreateFormDefaults,
   getFocusedGameForModeSwitch,
-  getFocusedOperationModeHint,
-  getGameOperationStatusHint,
   readStoredDefaultOperationMode,
   resolveAutoCallIntervalMs,
   shouldPromptApplyModeToCurrentGame,
@@ -125,12 +123,12 @@ import {
   normalizeCalledNumberPayload,
   operationsQueryKey,
   refetchCalledNumbersForSession,
-  upsertCalledNumber,
   optimisticallyPatchEntryFee,
   optimisticallyRemoveBingoClaim,
   optimisticallyReorderQueue,
+  applyRealtimeCalledNumber,
   patchOperationsCache,
-  patchOperationsCalledNumberCount,
+  readLiveCalledNumbers,
 } from "@/lib/admin/game-operations-cache";
 import { adminToast } from "@/lib/admin/admin-toast";
 import { socketService } from "@/lib/socket/socket-service";
@@ -200,6 +198,10 @@ export function GameOperations() {
   const [socketConnected, setSocketConnected] = useState(
     () => socketService.isConnected,
   );
+  const [calledNumbersRevision, setCalledNumbersRevision] = useState(0);
+  const bumpCalledNumbersRevision = useCallback(() => {
+    setCalledNumbersRevision((revision) => revision + 1);
+  }, []);
 
   const { data: timeConfig } = useQuery({
     queryKey: timeConfigQueryKey,
@@ -343,17 +345,19 @@ export function GameOperations() {
     },
     enabled: !!liveSessionId,
     staleTime: 30_000,
+    refetchInterval: pollOperationsFallback ? operationsFallbackPollingMs : false,
   });
 
-  const liveCalledNumbers = useMemo(() => {
-    if (!liveSessionId) {
-      return [];
+  useEffect(() => {
+    if (liveCalledNumbersData) {
+      bumpCalledNumbersRevision();
     }
+  }, [liveCalledNumbersData, bumpCalledNumbersRevision]);
 
-    return (liveCalledNumbersData?.calledNumbers ?? []).filter(
-      (entry) => entry.gameSessionId === liveSessionId,
-    );
-  }, [liveCalledNumbersData?.calledNumbers, liveSessionId]);
+  const liveCalledNumbers = useMemo(
+    () => readLiveCalledNumbers(queryClient, liveSessionId),
+    [queryClient, liveSessionId, calledNumbersRevision, liveCalledNumbersData],
+  );
   const latestCalledNumber = useMemo(() => {
     const lastFromList = liveCalledNumbers.at(-1);
     if (lastFromList) {
@@ -362,11 +366,21 @@ export function GameOperations() {
 
     return currentGame?.latestCalledNumber ?? null;
   }, [liveCalledNumbers, currentGame?.latestCalledNumber]);
-  const displayedCalledCount = Math.max(
-    currentGame?.calledNumbersCount ?? 0,
-    latestCalledNumber?.order ?? 0,
-    liveCalledNumbers.length,
-  );
+  const displayedCalledCount = useMemo(() => {
+    if (liveCalledNumbers.length > 0) {
+      const latestOrder = liveCalledNumbers.at(-1)?.order ?? 0;
+      return Math.max(liveCalledNumbers.length, latestOrder);
+    }
+
+    return Math.max(
+      currentGame?.calledNumbersCount ?? 0,
+      currentGame?.latestCalledNumber?.order ?? 0,
+    );
+  }, [
+    liveCalledNumbers,
+    currentGame?.calledNumbersCount,
+    currentGame?.latestCalledNumber?.order,
+  ]);
   const isAutoCalling = currentGame?.autoCallEnabled ?? false;
   const autoCallIntervalSec = Math.round(
     resolveAutoCallIntervalMs(currentGame ?? {}, timeConfig) / 1000,
@@ -395,20 +409,7 @@ export function GameOperations() {
           ),
         )
       : null;
-  const winnerWindowSecondsLeft =
-    isWinnerWindow && currentGame?.winnerWindowEndsAt
-      ? Math.max(
-          0,
-          Math.ceil(
-            (new Date(currentGame.winnerWindowEndsAt).getTime() -
-              winnerWindowNow) /
-              1000,
-          ),
-        )
-      : null;
 
-  // Single ticking source for every registration-countdown surface (status
-  // hint, "Auto starts" badge, and the countdown line).
   const registrationScheduledStartAt =
     registrationOpenGame?.scheduledStartAt ?? null;
   const [registrationNow, setRegistrationNow] = useState(() => Date.now());
@@ -432,11 +433,6 @@ export function GameOperations() {
   const registrationSecondsLeft = Number.isNaN(registrationCloseTime)
     ? null
     : Math.max(0, Math.ceil((registrationCloseTime - registrationNow) / 1000));
-
-  const hasAutoQueue =
-    registrationOpenGame?.operationMode === "AUTO" ||
-    currentGame?.operationMode === "AUTO" ||
-    queue.some((game) => game.operationMode === "AUTO");
 
   const showNextRegistration =
     registrationOpenGame != null &&
@@ -511,12 +507,8 @@ export function GameOperations() {
       }
 
       logCalledNumberEvent(calledNumber);
-      upsertCalledNumber(queryClient, activeSessionId, calledNumber);
-      patchOperationsCalledNumberCount(
-        queryClient,
-        activeSessionId,
-        calledNumber,
-      );
+      applyRealtimeCalledNumber(queryClient, activeSessionId, calledNumber);
+      bumpCalledNumbersRevision();
     };
 
     const handleReconnectRefresh = () => {
@@ -532,7 +524,25 @@ export function GameOperations() {
         "updatedReason" in payload
       ) {
         const reason = (payload as { updatedReason?: string }).updatedReason;
-        if (reason === "number_called" || reason === "auto_call_changed") {
+        if (reason === "number_called") {
+          return;
+        }
+
+        if (reason === "auto_call_changed") {
+          const data = payload as {
+            sessionId?: string | null;
+            slotId?: string | null;
+            autoCallEnabled?: boolean;
+            autoCallIntervalMs?: number | null;
+            nextAutoCallAt?: string | null;
+          };
+          patchOperationsCache(queryClient, {
+            sessionId: data.sessionId ?? undefined,
+            slotId: data.slotId ?? undefined,
+            autoCallEnabled: data.autoCallEnabled,
+            autoCallIntervalMs: data.autoCallIntervalMs,
+            nextAutoCallAt: data.nextAutoCallAt,
+          });
           return;
         }
       }
@@ -626,7 +636,7 @@ export function GameOperations() {
       socketService.off("slot:status_changed", handleStructuralRefresh);
       socketService.off("slot:entry_fee_updated", handleStructuralRefresh);
     };
-  }, [queryClient, scheduleOperationsRefresh]);
+  }, [queryClient, bumpCalledNumbersRevision, scheduleOperationsRefresh]);
 
   useEffect(() => {
     setDefaultOperationMode(readStoredDefaultOperationMode(window.localStorage));
@@ -770,12 +780,8 @@ export function GameOperations() {
         nextOrder,
       );
 
-      upsertCalledNumber(queryClient, sessionId, optimisticCalledNumber);
-      patchOperationsCalledNumberCount(
-        queryClient,
-        sessionId,
-        optimisticCalledNumber,
-      );
+      applyRealtimeCalledNumber(queryClient, sessionId, optimisticCalledNumber);
+      bumpCalledNumbersRevision();
 
       return { previousOperations, previousCalledNumbers, liveSessionId };
     },
@@ -1034,11 +1040,6 @@ export function GameOperations() {
             value={headerOperationMode}
             onChange={handleDefaultOperationModeChange}
             isLoading={applyOperationModeToCurrentGame.isPending}
-            hint={getFocusedOperationModeHint(
-              focusedGame,
-              defaultOperationMode,
-              timeConfig,
-            )}
             focusedGameLabel={
               focusedGame?.playCode ?? focusedGame?.staticCode ?? null
             }
@@ -1050,10 +1051,6 @@ export function GameOperations() {
         </div>
       </div>
 
-      {hasAutoQueue ? (
-        <p className="text-xs font-medium text-blue-700">Auto queue active</p>
-      ) : null}
-
       {isRateLimited ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           Sync paused briefly. Showing the last loaded game state
@@ -1063,8 +1060,7 @@ export function GameOperations() {
 
       {!socketConnected ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          Realtime disconnected. Reconnecting and polling game state every{" "}
-          {Math.round(operationsFallbackPollingMs / 1000)} seconds.
+          Reconnecting…
         </div>
       ) : null}
 
@@ -1108,31 +1104,14 @@ export function GameOperations() {
               gameRuleKey={currentGame.gameRule?.key}
               gameRuleName={currentGame.gameRule?.name}
             />
-            <OperationModeStatusHint
-              game={currentGame}
-              timing={timeConfig}
-              secondsUntilNextBall={nextAutoCallSeconds}
-              secondsUntilWinnerWindowEnd={winnerWindowSecondsLeft}
-            />
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge
-                variant="outline"
-                className={cn(
-                  socketConnected
-                    ? "border-green-300 bg-green-50 text-green-800"
-                    : "border-amber-300 bg-amber-50 text-amber-800",
-                )}
-              >
-                {socketConnected ? "Realtime connected" : "Realtime reconnecting"}
-              </Badge>
               {isAutoCalling ? (
                 <Badge variant="outline" className="border-red-300 bg-red-50 text-red-700">
-                  Auto-call active
                   {nextAutoCallSeconds !== null
-                    ? ` · next in ${nextAutoCallSeconds}s`
-                    : ` · every ${autoCallIntervalSec}s`}
+                    ? `Next ball in ${nextAutoCallSeconds}s`
+                    : "Auto-call on"}
                 </Badge>
               ) : null}
             </div>
@@ -1210,10 +1189,6 @@ export function GameOperations() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-medium">Winner window open</p>
-                    <p className="text-sm text-violet-800">
-                      Automatic rule validation is active. Other valid claims can
-                      still join until the timer ends.
-                    </p>
                     {(currentGame.winnerPayoutsSummary?.length ?? 0) > 0 ? (
                       <div className="mt-3 space-y-1">
                         <p className="text-sm font-medium text-violet-900">
@@ -1356,13 +1331,10 @@ export function GameOperations() {
                     {registrationOpenGame.rawStatus === "NEXT" ? "NEW" : "READY"}
                   </Badge>
                 </div>
-                <CardDescription className="text-blue-900/70">
-                  {currentGame
-                    ? "Players can register for the round after the current game finishes."
-                    : registrationOpenGame.operationMode === "AUTO"
-                      ? "Automatic countdown and auto-start when players register."
-                      : "Players can register. Start the game when you are ready."}
-                </CardDescription>
+                <p className="text-sm text-muted-foreground">
+                  {registrationOpenGame.staticCode}
+                  {registrationOpenGame.playCode && ` / ${registrationOpenGame.playCode}`}
+                </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <QueueOrderButtons
@@ -1391,19 +1363,7 @@ export function GameOperations() {
                   <Ban className="mr-2 h-4 w-4" />
                   Cancel
                 </LoadingButton>
-                {registrationOpenGame.operationMode === "AUTO" ? (
-                  <Badge
-                    variant="outline"
-                    className="border-blue-300 bg-white text-blue-700"
-                  >
-                    <Clock3 className="mr-1 h-3.5 w-3.5" />
-                    {registrationSecondsLeft == null
-                      ? "Auto queued"
-                      : registrationSecondsLeft > 0
-                        ? `Auto starts in ${registrationSecondsLeft}s`
-                        : "Auto starting…"}
-                  </Badge>
-                ) : (
+                {registrationOpenGame.operationMode === "AUTO" ? null : (
                   // Manual Start is hidden for AUTO. Backend still allows
                   // POST /admin/slots/:id/start as an emergency override.
                   <LoadingButton
@@ -1437,16 +1397,9 @@ export function GameOperations() {
               gameRuleKey={registrationOpenGame.gameRule?.key}
               gameRuleName={registrationOpenGame.gameRule?.name}
             />
-            <OperationModeStatusHint
-              game={registrationOpenGame}
-              timing={timeConfig}
-              secondsUntilRegistrationClose={registrationSecondsLeft}
-              isSameSlotAsCurrentGame={
-                currentGame?.slotId === registrationOpenGame.slotId
-              }
-            />
             {registrationOpenGame.operationMode === "AUTO" &&
-            registrationSecondsLeft != null ? (
+            registrationSecondsLeft != null &&
+            registrationSecondsLeft > 0 ? (
               <RegistrationCountdown
                 secondsLeft={registrationSecondsLeft}
                 preparing={
@@ -1556,9 +1509,6 @@ export function GameOperations() {
         <Card>
           <CardHeader>
             <CardTitle>Queue</CardTitle>
-            <CardDescription>
-              Reorder upcoming games. Live and checking games stay fixed.
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -1648,11 +1598,7 @@ export function GameOperations() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Game Rule (bingo pattern)</Label>
-              <p className="text-xs text-muted-foreground">
-                Controls how bingo claims are validated. This is separate from
-                operation mode.
-              </p>
+              <Label>Game rule</Label>
               <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a game rule" />
@@ -1673,12 +1619,7 @@ export function GameOperations() {
             </div>
 
             <div className="space-y-2">
-              <Label>Operation Mode (start behavior)</Label>
-              <p className="text-xs text-muted-foreground">
-                Default: {defaultOperationMode === "MANUAL" ? "Manual" : "Automatic"}
-                . Controls countdown, auto-start, and auto-call — not the bingo
-                pattern.
-              </p>
+              <Label>Operation mode</Label>
               <Select
                 value={createOperationMode}
                 onValueChange={(value) =>
@@ -1824,7 +1765,7 @@ export function GameOperations() {
             </DialogTitle>
             <DialogDescription>
               {currentGame
-                ? `Calling numbers for ${currentGame.staticCode}. Auto Call runs on the server and survives refresh.`
+                ? currentGame.staticCode
                 : "Record the next called number."}
             </DialogDescription>
           </DialogHeader>
@@ -1848,7 +1789,7 @@ export function GameOperations() {
                   <p className="mt-3 text-sm text-muted-foreground">None yet</p>
                 )}
                 <p className="mt-3 text-xs text-muted-foreground">
-                  {currentGame?.calledNumbersCount?.toLocaleString() ?? 0} of 75 called
+                  {displayedCalledCount.toLocaleString()} of 75 called
                 </p>
               </div>
 
@@ -2413,41 +2354,6 @@ function isValidCalledNumber(n: number): boolean {
   return n >= 1 && n <= 75;
 }
 
-function OperationModeStatusHint({
-  game,
-  timing,
-  secondsUntilNextBall = null,
-  secondsUntilRegistrationClose = null,
-  secondsUntilWinnerWindowEnd = null,
-  isSameSlotAsCurrentGame = false,
-}: {
-  game: GameOperationsCurrentResponse["liveGame"];
-  timing?: TimingConfigLike;
-  secondsUntilNextBall?: number | null;
-  secondsUntilRegistrationClose?: number | null;
-  secondsUntilWinnerWindowEnd?: number | null;
-  isSameSlotAsCurrentGame?: boolean;
-}) {
-  if (!game) {
-    return null;
-  }
-
-  return (
-    <p className="text-sm font-medium text-foreground/80">
-      {getGameOperationStatusHint(
-        game,
-        {
-          secondsUntilNextBall,
-          secondsUntilRegistrationClose,
-          secondsUntilWinnerWindowEnd,
-          isSameSlotAsCurrentGame,
-        },
-        timing,
-      )}
-    </p>
-  );
-}
-
 function OperationModeAndRuleLabels({
   operationMode,
   gameRuleKey,
@@ -2458,8 +2364,7 @@ function OperationModeAndRuleLabels({
   gameRuleName?: string | null;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Operation Mode:</span>
+    <div className="flex flex-wrap items-center gap-2">
       <Badge
         variant="outline"
         className={cn(
@@ -2470,13 +2375,9 @@ function OperationModeAndRuleLabels({
       >
         {operationMode === "AUTO" ? "Automatic" : "Manual"}
       </Badge>
-      <span className="text-muted-foreground">Game Rule:</span>
       <Badge variant="outline" className="border-violet-300 bg-violet-50 text-violet-800">
-        {gameRuleKey || gameRuleName || "Unknown"}
+        {gameRuleName || gameRuleKey || "Unknown"}
       </Badge>
-      {gameRuleName && gameRuleKey && gameRuleName !== gameRuleKey ? (
-        <span className="text-muted-foreground">({gameRuleName})</span>
-      ) : null}
     </div>
   );
 }
@@ -2484,13 +2385,11 @@ function OperationModeAndRuleLabels({
 function OperationModeHeaderControl({
   value,
   onChange,
-  hint,
   focusedGameLabel,
   isLoading = false,
 }: {
   value: GameOperationMode;
   onChange: (mode: GameOperationMode) => void;
-  hint: string;
   focusedGameLabel?: string | null;
   isLoading?: boolean;
 }) {
@@ -2498,12 +2397,8 @@ function OperationModeHeaderControl({
     <div className="space-y-2">
       <Label className="text-sm font-medium">Operation mode</Label>
       {focusedGameLabel ? (
-        <p className="text-xs text-muted-foreground">
-          Applies to {focusedGameLabel}
-        </p>
-      ) : (
-        <p className="text-xs text-muted-foreground">Default for new games</p>
-      )}
+        <p className="text-xs text-muted-foreground">{focusedGameLabel}</p>
+      ) : null}
       <div
         className={cn(
           "inline-flex rounded-lg border p-1",
@@ -2528,14 +2423,6 @@ function OperationModeHeaderControl({
           onClick={() => onChange("AUTO")}
         />
       </div>
-      <p
-        className={cn(
-          "text-xs",
-          value === "AUTO" ? "text-blue-800/80" : "text-slate-600",
-        )}
-      >
-        {hint}
-      </p>
     </div>
   );
 }
@@ -2591,7 +2478,7 @@ function RegistrationCountdown({
   if (preparing || secondsLeft <= 0) {
     return (
       <p className={cn("text-sm font-medium text-blue-700", className)}>
-        Registration closed · preparing game…
+        Starting soon…
       </p>
     );
   }

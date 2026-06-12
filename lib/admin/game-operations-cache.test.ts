@@ -5,6 +5,7 @@ import type { GameOperationsCurrentResponse } from "@/lib/api/admin";
 import type { CalledNumber } from "@/lib/api/types";
 
 import {
+  applyRealtimeCalledNumber,
   calledNumbersQueryKey,
   isCalledNumberForActiveSession,
   mergeCalledNumbersLists,
@@ -12,6 +13,7 @@ import {
   normalizeCalledNumberPayload,
   operationsQueryKey,
   patchOperationsCalledNumberCount,
+  readLiveCalledNumbers,
   upsertCalledNumber,
 } from "./game-operations-cache";
 
@@ -180,7 +182,7 @@ describe("game-operations-cache", () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(operationsQueryKey, createOperationsState());
 
-    const patched = patchOperationsCalledNumberCount(
+    applyRealtimeCalledNumber(
       queryClient,
       "session-1",
       createCalledNumber(35, 42, "n-35"),
@@ -189,14 +191,16 @@ describe("game-operations-cache", () => {
     const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
       operationsQueryKey,
     );
+    const liveCalledNumbers = readLiveCalledNumbers(queryClient, "session-1");
 
-    expect(patched).toBe(true);
     expect(operations?.liveGame?.calledNumbersCount).toBe(35);
     expect(operations?.liveGame?.latestCalledNumber).toEqual({
       letter: "B",
       number: 42,
       order: 35,
     });
+    expect(liveCalledNumbers).toHaveLength(1);
+    expect(liveCalledNumbers[0]?.number).toBe(42);
   });
 
   it("uses separate cache keys per session", () => {

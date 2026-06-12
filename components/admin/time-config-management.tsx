@@ -55,21 +55,21 @@ const gameAutomationFields: TimingField[] = [
   {
     key: "registrationDurationSeconds",
     label: "Registration duration (seconds)",
-    hint: "AUTO mode registration window. Affects future countdowns only, unless explicitly applied to the current game.",
+    hint: "",
     min: 10,
     max: 600,
   },
   {
     key: "autoCallIntervalSeconds",
-    label: "Auto-call interval (seconds)",
-    hint: "Delay between balls for AUTO games. Affects future games only, unless explicitly applied to the current game.",
+    label: "Time between balls (seconds)",
+    hint: "",
     min: 3,
     max: 60,
   },
   {
     key: "winnerWindowSeconds",
     label: "Winner window (seconds)",
-    hint: "How long other players can claim after the first valid bingo. Affects future winner windows only.",
+    hint: "",
     min: 5,
     max: 120,
   },
@@ -78,8 +78,8 @@ const gameAutomationFields: TimingField[] = [
 const cartelaFields: TimingField[] = [
   {
     key: "cartelaHoldSeconds",
-    label: "Cartela hold / reservation (seconds)",
-    hint: "How long a player may hold a cartela before confirming.",
+    label: "Cartela hold (seconds)",
+    hint: "",
     min: 5,
     max: 30,
   },
@@ -88,31 +88,31 @@ const cartelaFields: TimingField[] = [
 const playerUiFields: TimingField[] = [
   {
     key: "finishedResultDisplaySeconds",
-    label: "Finished result display (seconds)",
-    hint: "Minimum time the player app shows finished results before advancing.",
+    label: "Finished results screen (seconds)",
+    hint: "",
     min: 1,
     max: 30,
   },
   {
     key: "preparingDisplayMaxSeconds",
     label: "Preparing game max wait (seconds)",
-    hint: "Optional cap while waiting for PLAYING. Leave empty to disable.",
+    hint: "",
     min: 5,
     max: 120,
     optional: true,
   },
   {
     key: "missedNumberAnimationMs",
-    label: "Missed number animation delay (ms)",
-    hint: "Stagger between balls when catching up after reconnect.",
+    label: "Catch-up animation delay (ms)",
+    hint: "",
     min: 50,
     max: 2000,
     step: 50,
   },
   {
     key: "missedNumberStaggerMaxBalls",
-    label: "Missed number stagger cap (balls)",
-    hint: "Maximum animated balls before a final sync.",
+    label: "Catch-up animation limit (balls)",
+    hint: "",
     min: 1,
     max: 75,
   },
@@ -258,7 +258,7 @@ function TimingFieldGroup({
   onChange,
 }: {
   title: string;
-  description: string;
+  description?: string;
   fields: TimingField[];
   draft: Record<string, string>;
   onChange: (key: TimingFieldKey, value: string) => void;
@@ -267,7 +267,7 @@ function TimingFieldGroup({
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent className="grid gap-5 md:grid-cols-2">
         {fields.map((field) => (
@@ -282,10 +282,6 @@ function TimingFieldGroup({
               value={draft[field.key] ?? ""}
               onChange={(event) => onChange(field.key, event.target.value)}
             />
-            <p className="text-sm text-muted-foreground">
-              {field.hint} {field.min}–{field.max}
-              {field.optional ? " · optional" : ""}
-            </p>
           </div>
         ))}
       </CardContent>
@@ -397,10 +393,10 @@ export function TimeConfigManagement() {
   const applyToCurrentGameHint = !focusedGame
     ? "No active game right now."
     : focusedGame.operationMode !== "AUTO"
-      ? "The current game is in Manual mode; timing does not apply."
+      ? "The current game is manual."
       : focusedGame.playerStatus === "registrationOpen"
-        ? "Restarts the registration countdown with the duration above and updates the auto-call interval."
-        : "Updates the auto-call interval of the live game immediately.";
+        ? "Restarts registration with the duration above."
+        : "Updates the live game timing.";
 
   const handleApplyToCurrentGame = () => {
     if (!draft || !focusedGame || !canApplyToCurrentGame) {
@@ -433,7 +429,7 @@ export function TimeConfigManagement() {
       <div className="space-y-6">
         <PageHeader
           title="Time Config"
-          description="Defaults for new games and client behavior. Active games keep their saved timings."
+          description="Default timings for new games."
         />
         <AdminErrorState
           title="Could not load timing defaults"
@@ -450,7 +446,7 @@ export function TimeConfigManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Time Config"
-        description="Defaults for new games and client behavior. Active games keep their saved timings."
+        description="Default timings for new games."
       />
 
       <Card>
@@ -462,8 +458,7 @@ export function TimeConfigManagement() {
             <div>
               <p className="font-medium text-foreground">Saved defaults</p>
               <p className="text-sm text-muted-foreground">
-                Applies to new registrations, new winner windows, and new
-                reservations. Active session snapshots stay unchanged.
+                Used when new games are created.
               </p>
             </div>
           </div>
@@ -473,7 +468,6 @@ export function TimeConfigManagement() {
 
       <TimingFieldGroup
         title="Game automation"
-        description="Registration, auto-call, and winner window defaults for AUTO games."
         fields={gameAutomationFields}
         draft={draft}
         onChange={handleFieldChange}
@@ -481,24 +475,14 @@ export function TimeConfigManagement() {
 
       <TimingFieldGroup
         title="Cartela registration"
-        description="Reservation hold duration shared with the player app."
         fields={cartelaFields}
         draft={draft}
         onChange={handleFieldChange}
       />
 
       <TimingFieldGroup
-        title="Player app transitions"
-        description="Client UX timings exposed through GET /games/time-config."
+        title="Player app"
         fields={playerUiFields}
-        draft={draft}
-        onChange={handleFieldChange}
-      />
-
-      <TimingFieldGroup
-        title="System refresh"
-        description="Debounce and fallback polling for admin and player clients."
-        fields={refreshFields}
         draft={draft}
         onChange={handleFieldChange}
       />
@@ -507,9 +491,7 @@ export function TimeConfigManagement() {
         <CardHeader>
           <CardTitle>Apply to current game</CardTitle>
           <CardDescription>
-            Saving defaults never changes a game that is already running. Use
-            this to explicitly copy the registration duration and auto-call
-            interval above onto the active game.
+            Copy registration and ball timing to the game that is running now.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -99,10 +99,16 @@ export function getCreateFormDefaults(
   };
 }
 
-export function getOperationModeHint(mode: GameOperationMode): string {
-  return mode === "MANUAL"
-    ? "Admin starts games"
-    : "Registration countdown, auto-start, auto-call";
+export function getOperationModeHint(_mode: GameOperationMode): string {
+  return "";
+}
+
+export function getFocusedOperationModeHint(
+  _focusedGame: GameOperationItem | null,
+  _defaultMode: GameOperationMode,
+  _timing?: TimingConfigLike,
+): string {
+  return "";
 }
 
 const blockedOperationModeSwitchStatuses = new Set([
@@ -214,20 +220,6 @@ export function getGameOperationStatusHint(
   return getOperationModeHint("AUTO");
 }
 
-export function getFocusedOperationModeHint(
-  focusedGame: GameOperationItem | null,
-  defaultMode: GameOperationMode,
-  timing?: TimingConfigLike,
-): string {
-  if (focusedGame) {
-    return getGameOperationStatusHint(focusedGame, {}, timing);
-  }
-
-  return defaultMode === "MANUAL"
-    ? "Default for new games — admin starts games"
-    : "Default for new games — countdown, auto-start, auto-call";
-}
-
 export function shouldPromptApplyModeToCurrentGame(
   currentGame: GameOperationItem | null,
   newMode: GameOperationMode,
@@ -267,8 +259,8 @@ export function buildOperationModeSwitchPayload(
 
 export function getApplyOperationModePrompt(mode: GameOperationMode): string {
   return mode === "AUTO"
-    ? "Apply Automatic mode to current game?"
-    : "Apply Manual mode to current game? Auto-call will stop if the game is live.";
+    ? "Switch this game to Automatic?"
+    : "Switch this game to Manual?";
 }
 
 export function getApplyOperationModeDescription(
@@ -278,8 +270,8 @@ export function getApplyOperationModeDescription(
   const gameLabel = game.playCode ?? game.staticCode;
 
   if (mode === "AUTO") {
-    return `${gameLabel} will use a registration countdown, auto-start, and auto-call. Registered cartelas and prizes stay unchanged.`;
+    return `${gameLabel} will run on a registration timer and call numbers automatically.`;
   }
 
-  return `${gameLabel} will return to manual admin control. Auto-call stops if the game is already live.`;
+  return `${gameLabel} will be started and called manually.`;
 }

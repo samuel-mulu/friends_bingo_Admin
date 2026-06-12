@@ -107,6 +107,32 @@ export function patchOperationsCalledNumberCount(
   });
 }
 
+export function applyRealtimeCalledNumber(
+  queryClient: QueryClient,
+  sessionId: string,
+  calledNumber: CalledNumber,
+): void {
+  upsertCalledNumber(queryClient, sessionId, calledNumber);
+  patchOperationsCalledNumberCount(queryClient, sessionId, calledNumber);
+}
+
+export function readLiveCalledNumbers(
+  queryClient: QueryClient,
+  sessionId: string | null | undefined,
+): CalledNumber[] {
+  if (!sessionId) {
+    return [];
+  }
+
+  const cached = queryClient.getQueryData<CalledNumbersCache>(
+    calledNumbersQueryKey(sessionId),
+  );
+
+  return (cached?.calledNumbers ?? []).filter(
+    (entry) => entry.gameSessionId === sessionId,
+  );
+}
+
 export function upsertCalledNumber(
   queryClient: QueryClient,
   sessionId: string,

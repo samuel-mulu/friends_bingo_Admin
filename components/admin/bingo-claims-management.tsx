@@ -89,7 +89,7 @@ export function BingoClaimsManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Bingo Claims"
-        description="Manual-rule fallback queue. Automatic FULL_HOUSE and HALF_HOUSE games resolve claims without admin review."
+        description="Review and approve bingo claims that need admin action."
       />
 
       <Card>
@@ -97,10 +97,6 @@ export function BingoClaimsManagement() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
               <CardTitle>Claims queue</CardTitle>
-              <CardDescription>
-                Approve and reject actions apply only to legacy MANUAL games.
-                Automatic games use the winner window flow instead.
-              </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
               <div className="font-medium text-foreground">

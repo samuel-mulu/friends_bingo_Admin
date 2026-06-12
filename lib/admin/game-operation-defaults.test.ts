@@ -65,7 +65,7 @@ describe("game-operation-defaults", () => {
       registrationDurationSeconds: FALLBACK_REGISTRATION_DURATION_SECONDS,
       autoCallIntervalSeconds: FALLBACK_AUTO_CALL_INTERVAL_SECONDS,
     });
-    expect(getOperationModeHint("MANUAL")).toBe("Admin starts games");
+    expect(getOperationModeHint("MANUAL")).toBe("");
   });
 
   it("defaults create form to Automatic with 60s and 7s", () => {
@@ -74,9 +74,7 @@ describe("game-operation-defaults", () => {
       registrationDurationSeconds: FALLBACK_REGISTRATION_DURATION_SECONDS,
       autoCallIntervalSeconds: FALLBACK_AUTO_CALL_INTERVAL_SECONDS,
     });
-    expect(getOperationModeHint("AUTO")).toBe(
-      "Registration countdown, auto-start, auto-call",
-    );
+    expect(getOperationModeHint("AUTO")).toBe("");
   });
 
   it("restores selected mode from storage after refresh", () => {
@@ -106,7 +104,7 @@ describe("game-operation-defaults", () => {
       shouldPromptApplyModeToCurrentGame(currentGame, "AUTO"),
     ).toBe(true);
     expect(getApplyOperationModePrompt("AUTO")).toBe(
-      "Apply Automatic mode to current game?",
+      "Switch this game to Automatic?",
     );
   });
 
