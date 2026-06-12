@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { LoadingButton } from "@/components/admin/loading-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,7 +45,21 @@ export function ActionDialog({
   extraContent?: ReactNode;
 }) {
   const [value, setValue] = useState(field?.defaultValue ?? "");
+  const confirmLockRef = useRef(false);
   const dialogKey = `${open ? "open" : "closed"}:${field?.defaultValue ?? ""}:${title}`;
+
+  const handleConfirm = async () => {
+    if (confirmLockRef.current || isPending) {
+      return;
+    }
+
+    confirmLockRef.current = true;
+    try {
+      await onConfirm(value);
+    } finally {
+      confirmLockRef.current = false;
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -84,7 +98,9 @@ export function ActionDialog({
             isLoading={isPending}
             loadingLabel="Working..."
             disabled={Boolean(field?.required && !value.trim())}
-            onClick={() => onConfirm(value)}
+            onClick={() => {
+              void handleConfirm();
+            }}
           >
             {confirmLabel}
           </LoadingButton>

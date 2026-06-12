@@ -721,11 +721,12 @@ export function GameOperations() {
 
   const cancelLiveSession = useAdminMutation({
     mutationFn: (sessionId: string) => cancelBlockingSession(sessionId),
-    successMessage: "Live game cancelled.",
     errorMessage: "Failed to cancel live game.",
     invalidateQueryKeys: [],
-    onSuccess: () => {
-      setCancelLiveOpen(false);
+    onSuccess: (data) => {
+      if (!data.alreadyCancelled) {
+        adminToast.success("Live game cancelled.");
+      }
       scheduleOperationsRefresh(true);
     },
   });
@@ -2007,9 +2008,11 @@ export function GameOperations() {
         confirmLabel="Cancel game"
         confirmVariant="destructive"
         onConfirm={() => {
-          if (currentGame?.sessionId) {
-            cancelLiveSession.mutate(currentGame.sessionId);
+          if (!currentGame?.sessionId || cancelLiveSession.isPending) {
+            return;
           }
+          setCancelLiveOpen(false);
+          cancelLiveSession.mutate(currentGame.sessionId);
         }}
         isPending={cancelLiveSession.isPending}
       />

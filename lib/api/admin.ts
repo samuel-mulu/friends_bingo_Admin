@@ -278,7 +278,11 @@ export function reorderAdminSlots(slotIds: string[]) {
 }
 
 export function cancelBlockingSession(sessionId: string) {
-  return apiRequest<{ success: true; sessionId: string }>({
+  return apiRequest<{
+    success: true;
+    sessionId: string;
+    alreadyCancelled?: boolean;
+  }>({
     url: `/admin/sessions/${sessionId}/cancel`,
     method: "PATCH",
   });
