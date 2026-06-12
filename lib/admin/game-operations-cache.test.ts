@@ -6,6 +6,7 @@ import type { CalledNumber } from "@/lib/api/types";
 
 import {
   calledNumbersQueryKey,
+  isCalledNumberForActiveSession,
   mergeCalledNumbersLists,
   mergeCalledNumbersResponse,
   normalizeCalledNumberPayload,
@@ -66,6 +67,17 @@ function createOperationsState(): GameOperationsCurrentResponse {
 }
 
 describe("game-operations-cache", () => {
+  it("ignores number_called from a previous session", () => {
+    const oldSessionBall = createCalledNumber(35, 42, "n-35", "session-old");
+
+    expect(isCalledNumberForActiveSession(oldSessionBall, "session-new")).toBe(
+      false,
+    );
+    expect(isCalledNumberForActiveSession(oldSessionBall, "session-old")).toBe(
+      true,
+    );
+  });
+
   it("normalizes game:number_called payloads with gameSessionId", () => {
     expect(
       normalizeCalledNumberPayload({

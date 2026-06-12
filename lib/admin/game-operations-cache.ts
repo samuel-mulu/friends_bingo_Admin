@@ -234,6 +234,17 @@ export function patchOperationsCache(
   return true;
 }
 
+export function isCalledNumberForActiveSession(
+  calledNumber: CalledNumber,
+  activeSessionId: string | null | undefined,
+): boolean {
+  return (
+    activeSessionId != null &&
+    activeSessionId.length > 0 &&
+    calledNumber.gameSessionId === activeSessionId
+  );
+}
+
 export function normalizeCalledNumberPayload(payload: unknown): CalledNumber | null {
   if (!payload || typeof payload !== "object") {
     return null;

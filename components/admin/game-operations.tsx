@@ -118,6 +118,7 @@ import {
   createOptimisticCalledNumber,
   dropTerminalSessionFromOperationsCache,
   invalidateOperationsCache,
+  isCalledNumberForActiveSession,
   isTerminalGameStatus,
   logCalledNumberEvent,
   mergeCalledNumbersResponse,
@@ -500,12 +501,12 @@ export function GameOperations() {
   useEffect(() => {
     const handleNumberCalled = (payload: unknown) => {
       const calledNumber = normalizeCalledNumberPayload(payload);
-      if (!calledNumber) {
-        return;
-      }
-
       const activeSessionId = liveSessionIdRef.current;
-      if (!activeSessionId || calledNumber.gameSessionId !== activeSessionId) {
+      if (
+        calledNumber == null ||
+        activeSessionId == null ||
+        !isCalledNumberForActiveSession(calledNumber, activeSessionId)
+      ) {
         return;
       }
 
