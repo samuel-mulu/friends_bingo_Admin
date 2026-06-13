@@ -12,6 +12,10 @@ import {
   mergeCalledNumbersResponse,
   normalizeCalledNumberPayload,
   operationsQueryKey,
+  parseAutoCallScheduleFromPayload,
+  optimisticallyClearWaitingQueue,
+  dedupeOperationQueue,
+  getOperationItemKey,
   patchOperationsCalledNumberCount,
   readLiveCalledNumbers,
   upsertCalledNumber,
@@ -97,6 +101,20 @@ describe("game-operations-cache", () => {
       number: 12,
       order: 1,
       createdAt: "2026-06-10T12:00:07.000Z",
+    });
+  });
+
+  it("parses auto-call schedule from number_called payload", () => {
+    expect(
+      parseAutoCallScheduleFromPayload({
+        nextAutoCallAt: "2026-06-10T12:00:14.000Z",
+        autoCallEnabled: true,
+        autoCallIntervalMs: 7000,
+      }),
+    ).toEqual({
+      nextAutoCallAt: "2026-06-10T12:00:14.000Z",
+      autoCallEnabled: true,
+      autoCallIntervalMs: 7000,
     });
   });
 
@@ -228,5 +246,100 @@ describe("game-operations-cache", () => {
     expect(sessionB?.calledNumbers[0]?.gameSessionId).toBe("session-b");
     expect(sessionA?.calledNumbers[0]?.number).toBe(1);
     expect(sessionB?.calledNumbers[0]?.number).toBe(2);
+  });
+
+  it("clears waiting queue optimistically while keeping paid registration", () => {
+    const queryClient = new QueryClient();
+    const operations: GameOperationsCurrentResponse = {
+      liveGame: null,
+      checkingGame: null,
+      registrationOpenGame: {
+        slotId: "slot-reg",
+        sessionId: "session-reg",
+        sortOrder: 1,
+      } as GameOperationsCurrentResponse["registrationOpenGame"],
+      queue: [
+        { slotId: "slot-q1", sortOrder: 2 },
+        { slotId: "slot-q2", sortOrder: 3 },
+      ] as GameOperationsCurrentResponse["queue"],
+      timestamp: new Date().toISOString(),
+    };
+
+    queryClient.setQueryData(operationsQueryKey, operations);
+
+    optimisticallyClearWaitingQueue(queryClient, {
+      keptRegistration: true,
+      cancelledEmptyRegistration: false,
+    });
+
+    const next = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(next?.queue).toEqual([]);
+    expect(next?.registrationOpenGame?.slotId).toBe("slot-reg");
+  });
+
+  it("clears registration optimistically when empty registration was removed", () => {
+    const queryClient = new QueryClient();
+    const operations: GameOperationsCurrentResponse = {
+      liveGame: null,
+      checkingGame: null,
+      registrationOpenGame: {
+        slotId: "slot-reg",
+        sessionId: "session-reg",
+        sortOrder: 1,
+      } as GameOperationsCurrentResponse["registrationOpenGame"],
+      queue: [{ slotId: "slot-q1", sortOrder: 2 }] as GameOperationsCurrentResponse["queue"],
+      timestamp: new Date().toISOString(),
+    };
+
+    queryClient.setQueryData(operationsQueryKey, operations);
+
+    optimisticallyClearWaitingQueue(queryClient, {
+      keptRegistration: false,
+      cancelledEmptyRegistration: true,
+    });
+
+    const next = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(next?.queue).toEqual([]);
+    expect(next?.registrationOpenGame).toBeNull();
+  });
+
+  it("dedupes queue rows by slotId and prefers session-backed rows", () => {
+    const slotId = "79c3e16c-f807-48e9-87a8-c9c2f8acbbc6";
+    const deduped = dedupeOperationQueue([
+      {
+        slotId,
+        sessionId: null,
+        sortOrder: 2,
+      } as GameOperationsCurrentResponse["queue"][number],
+      {
+        slotId,
+        sessionId: "session-ready",
+        sortOrder: 2,
+      } as GameOperationsCurrentResponse["queue"][number],
+    ]);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.sessionId).toBe("session-ready");
+  });
+
+  it("builds stable react keys from slot and session ids", () => {
+    expect(
+      getOperationItemKey({
+        slotId: "slot-1",
+        sessionId: "session-1",
+      } as GameOperationsCurrentResponse["queue"][number]),
+    ).toBe("slot-1:session-1");
+    expect(
+      getOperationItemKey({
+        slotId: "slot-1",
+        sessionId: null,
+      } as GameOperationsCurrentResponse["queue"][number]),
+    ).toBe("slot-1:slot");
   });
 });

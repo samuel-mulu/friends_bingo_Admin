@@ -62,6 +62,7 @@ import {
   approveAdminBingoClaim,
   callAdminGameNumber,
   cancelBlockingSession,
+  clearAdminQueue,
   createAdminGame,
   updateAdminSlotOperationMode,
   getAdminBingoClaims,
@@ -90,6 +91,7 @@ import {
   getApplyOperationModePrompt,
   getCreateFormDefaults,
   getFocusedGameForModeSwitch,
+  getGameOperationStatusHint,
   readStoredDefaultOperationMode,
   resolveAutoCallIntervalMs,
   shouldPromptApplyModeToCurrentGame,
@@ -114,7 +116,9 @@ import {
   calledNumbersQueryKey,
   type CalledNumbersCache,
   createOptimisticCalledNumber,
+  dedupeOperationQueue,
   dropTerminalSessionFromOperationsCache,
+  getOperationItemKey,
   invalidateOperationsCache,
   isCalledNumberForActiveSession,
   isTerminalGameStatus,
@@ -123,11 +127,13 @@ import {
   normalizeCalledNumberPayload,
   operationsQueryKey,
   refetchCalledNumbersForSession,
+  optimisticallyClearWaitingQueue,
   optimisticallyPatchEntryFee,
   optimisticallyRemoveBingoClaim,
   optimisticallyReorderQueue,
   applyRealtimeCalledNumber,
   patchOperationsCache,
+  parseAutoCallScheduleFromPayload,
   readLiveCalledNumbers,
 } from "@/lib/admin/game-operations-cache";
 import { adminToast } from "@/lib/admin/admin-toast";
@@ -160,12 +166,6 @@ export function GameOperations() {
   const [entryFeeError, setEntryFeeError] = useState<string | null>(null);
   const [isCreateGameModalOpen, setIsCreateGameModalOpen] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState("");
-  const [createOperationMode, setCreateOperationMode] =
-    useState<GameOperationMode>("MANUAL");
-  const [createRegistrationDurationSeconds, setCreateRegistrationDurationSeconds] =
-    useState("");
-  const [createAutoCallIntervalSeconds, setCreateAutoCallIntervalSeconds] =
-    useState("");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
   const [defaultOperationMode, setDefaultOperationMode] =
     useState<GameOperationMode>("MANUAL");
@@ -187,6 +187,7 @@ export function GameOperations() {
     slotId: string;
     label: string;
   } | null>(null);
+  const [clearQueueOpen, setClearQueueOpen] = useState(false);
   const [approveClaimTarget, setApproveClaimTarget] =
     useState<AdminBingoClaim | null>(null);
   const [rejectClaimTarget, setRejectClaimTarget] =
@@ -243,7 +244,16 @@ export function GameOperations() {
   const liveGame = operations?.liveGame;
   const checkingGame = operations?.checkingGame;
   const registrationOpenGame = operations?.registrationOpenGame;
-  const queue = operations?.queue ?? [];
+  const queue = useMemo(() => {
+    const rawQueue = operations?.queue ?? [];
+    const registrationSlotId = registrationOpenGame?.slotId;
+
+    return dedupeOperationQueue(
+      registrationSlotId
+        ? rawQueue.filter((item) => item.slotId !== registrationSlotId)
+        : rawQueue,
+    );
+  }, [operations?.queue, registrationOpenGame?.slotId]);
   const currentGame = liveGame ?? checkingGame ?? null;
   const isWinnerWindow = currentGame?.playerStatus === "winnerWindow";
   const isManualChecking = checkingGame?.gameRule?.key === "MANUAL";
@@ -283,6 +293,8 @@ export function GameOperations() {
   const liveSessionIdRef = useRef(liveSessionId);
   liveSessionIdRef.current = liveSessionId;
   const previousLiveSessionIdRef = useRef<string | null>(null);
+  const queueSectionRef = useRef<HTMLDivElement | null>(null);
+  const scrollToQueueAfterCreateRef = useRef(false);
 
   const scheduleOperationsRefresh = useCallback(
     (immediate = false) => {
@@ -349,15 +361,61 @@ export function GameOperations() {
   });
 
   useEffect(() => {
-    if (liveCalledNumbersData) {
-      bumpCalledNumbersRevision();
+    if (!liveSessionId) {
+      return;
     }
-  }, [liveCalledNumbersData, bumpCalledNumbersRevision]);
+
+    const queryKey = calledNumbersQueryKey(liveSessionId);
+
+    return queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") {
+        return;
+      }
+
+      const key = event.query.queryKey;
+      if (
+        key[0] === "admin" &&
+        key[1] === "called-numbers" &&
+        key[2] === liveSessionId
+      ) {
+        bumpCalledNumbersRevision();
+      }
+    });
+  }, [liveSessionId, queryClient, bumpCalledNumbersRevision]);
 
   const liveCalledNumbers = useMemo(
     () => readLiveCalledNumbers(queryClient, liveSessionId),
     [queryClient, liveSessionId, calledNumbersRevision, liveCalledNumbersData],
   );
+
+  useEffect(() => {
+    if (!liveSessionId || !socketConnected) {
+      return;
+    }
+
+    const expectedOrder = Math.max(
+      currentGame?.calledNumbersCount ?? 0,
+      currentGame?.latestCalledNumber?.order ?? 0,
+    );
+    const cachedOrder =
+      liveCalledNumbers.length > 0
+        ? Math.max(
+            liveCalledNumbers.length,
+            liveCalledNumbers.at(-1)?.order ?? 0,
+          )
+        : 0;
+
+    if (expectedOrder > cachedOrder) {
+      refetchCalledNumbersForSession(queryClient, liveSessionId);
+    }
+  }, [
+    currentGame?.calledNumbersCount,
+    currentGame?.latestCalledNumber?.order,
+    liveCalledNumbers,
+    liveSessionId,
+    queryClient,
+    socketConnected,
+  ]);
   const latestCalledNumber = useMemo(() => {
     const lastFromList = liveCalledNumbers.at(-1);
     if (lastFromList) {
@@ -366,6 +424,30 @@ export function GameOperations() {
 
     return currentGame?.latestCalledNumber ?? null;
   }, [liveCalledNumbers, currentGame?.latestCalledNumber]);
+  const displayCalledNumbers = useMemo((): CalledNumber[] => {
+    if (liveCalledNumbers.length > 0) {
+      return liveCalledNumbers;
+    }
+
+    if (!latestCalledNumber) {
+      return [];
+    }
+
+    if ("gameSessionId" in latestCalledNumber && latestCalledNumber.gameSessionId) {
+      return [latestCalledNumber as CalledNumber];
+    }
+
+    return [
+      {
+        id: `latest-${latestCalledNumber.order}`,
+        gameSessionId: liveSessionId ?? "",
+        letter: latestCalledNumber.letter,
+        number: latestCalledNumber.number,
+        order: latestCalledNumber.order,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  }, [liveCalledNumbers, latestCalledNumber, liveSessionId]);
   const displayedCalledCount = useMemo(() => {
     if (liveCalledNumbers.length > 0) {
       const latestOrder = liveCalledNumbers.at(-1)?.order ?? 0;
@@ -409,6 +491,12 @@ export function GameOperations() {
           ),
         )
       : null;
+  const nextAutoCallLabel =
+    nextAutoCallSeconds === null
+      ? "Auto-call on"
+      : nextAutoCallSeconds <= 0
+        ? "Calling next ball…"
+        : `Next ball in ${nextAutoCallSeconds}s`;
 
   const registrationScheduledStartAt =
     registrationOpenGame?.scheduledStartAt ?? null;
@@ -437,12 +525,23 @@ export function GameOperations() {
   const showNextRegistration =
     registrationOpenGame != null &&
     registrationOpenGame.slotId !== currentGame?.slotId;
+  const hasClearableQueue =
+    queue.length > 0 ||
+    (registrationOpenGame != null &&
+      registrationOpenGame.slotId !== currentGame?.slotId);
+  const hasEmptyRegistration =
+    registrationOpenGame != null &&
+    registrationOpenGame.slotId !== currentGame?.slotId &&
+    (registrationOpenGame.registeredCartelasCount ?? 0) === 0;
+  const clearQueueConfirmDescription = hasEmptyRegistration
+    ? "This will remove only waiting games. Live games and paid registrations will stay. The empty registration will also be removed."
+    : "This will remove only waiting games. Live games and paid registrations will stay.";
 
   const reorderableSlots = useMemo(() => {
-    const slots = [
+    const slots = dedupeOperationQueue([
       ...(registrationOpenGame ? [registrationOpenGame] : []),
       ...queue,
-    ];
+    ]);
 
     return slots.sort(
       (left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0),
@@ -470,6 +569,20 @@ export function GameOperations() {
       return activeGameRules[0].id;
     });
   }, [isCreateGameModalOpen, activeGameRules]);
+
+  useEffect(() => {
+    if (!scrollToQueueAfterCreateRef.current) {
+      return;
+    }
+
+    scrollToQueueAfterCreateRef.current = false;
+    window.requestAnimationFrame(() => {
+      queueSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [operations?.timestamp, queue.length, registrationOpenGame?.slotId]);
 
   // Fetch pending bingo claims for the checking game
   const { data: bingoClaims } = useQuery({
@@ -508,6 +621,16 @@ export function GameOperations() {
 
       logCalledNumberEvent(calledNumber);
       applyRealtimeCalledNumber(queryClient, activeSessionId, calledNumber);
+
+      const autoCallSchedule = parseAutoCallScheduleFromPayload(payload);
+      if (autoCallSchedule) {
+        patchOperationsCache(queryClient, {
+          sessionId: activeSessionId,
+          ...autoCallSchedule,
+        });
+        setAutoCallNow(Date.now());
+      }
+
       bumpCalledNumbersRevision();
     };
 
@@ -545,6 +668,11 @@ export function GameOperations() {
           });
           return;
         }
+
+        if (reason === "queue_cleared") {
+          scheduleOperationsRefresh(true);
+          return;
+        }
       }
 
       scheduleOperationsRefresh(false);
@@ -576,6 +704,8 @@ export function GameOperations() {
 
         if (data.reason === "no_players") {
           adminToast.info("Skipped — no players joined.");
+        } else if (data.reason === "queue_cleared") {
+          // Queue clear already shows its own success toast.
         } else {
           const refunded = data.refundedCount ?? 0;
           adminToast.info(
@@ -636,7 +766,12 @@ export function GameOperations() {
       socketService.off("slot:status_changed", handleStructuralRefresh);
       socketService.off("slot:entry_fee_updated", handleStructuralRefresh);
     };
-  }, [queryClient, bumpCalledNumbersRevision, scheduleOperationsRefresh]);
+  }, [
+    queryClient,
+    bumpCalledNumbersRevision,
+    scheduleOperationsRefresh,
+    socketConnected,
+  ]);
 
   useEffect(() => {
     setDefaultOperationMode(readStoredDefaultOperationMode(window.localStorage));
@@ -644,10 +779,6 @@ export function GameOperations() {
 
   const openCreateGameModal = () => {
     setCreateGameError(null);
-    const defaults = getCreateFormDefaults(defaultOperationMode, timeConfig);
-    setCreateOperationMode(defaults.operationMode);
-    setCreateRegistrationDurationSeconds(defaults.registrationDurationSeconds);
-    setCreateAutoCallIntervalSeconds(defaults.autoCallIntervalSeconds);
     setIsCreateGameModalOpen(true);
   };
 
@@ -710,6 +841,7 @@ export function GameOperations() {
     onSuccess: () => {
       setIsCreateGameModalOpen(false);
       setCreateGameError(null);
+      scrollToQueueAfterCreateRef.current = true;
       scheduleOperationsRefresh(true);
     },
     onError: (error) => {
@@ -937,6 +1069,27 @@ export function GameOperations() {
     },
   });
 
+  const clearQueue = useAdminMutation({
+    mutationFn: clearAdminQueue,
+    invalidateQueryKeys: [],
+    onSuccess: (result) => {
+      setClearQueueOpen(false);
+      optimisticallyClearWaitingQueue(queryClient, {
+        keptRegistration: result.keptRegistration,
+        cancelledEmptyRegistration: result.cancelledEmptyRegistration,
+      });
+      adminToast.success(
+        result.keptRegistration
+          ? "Waiting queue cleared. Current registration kept."
+          : "Waiting queue cleared.",
+      );
+      scheduleOperationsRefresh(true);
+    },
+    onError: (error) => {
+      adminToast.error(getApiErrorMessage(error, "Failed to clear queue."));
+    },
+  });
+
   const handleReorder = (slotId: string, direction: "up" | "down") => {
     if (reorderSlots.isPending) {
       return;
@@ -1104,14 +1257,42 @@ export function GameOperations() {
               gameRuleKey={currentGame.gameRule?.key}
               gameRuleName={currentGame.gameRule?.name}
             />
+            <p className="text-sm text-muted-foreground">
+              {getGameOperationStatusHint(
+                currentGame,
+                {
+                  secondsUntilNextBall: nextAutoCallSeconds,
+                  secondsUntilWinnerWindowEnd:
+                    currentGame.playerStatus === "winnerWindow" &&
+                    currentGame.winnerWindowEndsAt
+                      ? Math.max(
+                          0,
+                          Math.ceil(
+                            (new Date(currentGame.winnerWindowEndsAt).getTime() -
+                              winnerWindowNow) /
+                              1000,
+                          ),
+                        )
+                      : null,
+                },
+                timeConfig ?? undefined,
+              )}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {socketConnected ? (
+                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
+                  Realtime connected
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                  Polling every {Math.round(operationsFallbackPollingMs / 1000)}s
+                </Badge>
+              )}
               {isAutoCalling ? (
                 <Badge variant="outline" className="border-red-300 bg-red-50 text-red-700">
-                  {nextAutoCallSeconds !== null
-                    ? `Next ball in ${nextAutoCallSeconds}s`
-                    : "Auto-call on"}
+                  {nextAutoCallLabel}
                 </Badge>
               ) : null}
             </div>
@@ -1165,22 +1346,8 @@ export function GameOperations() {
 
             {currentGame.playerStatus !== "checking" ? (
               <CalledNumbersStrip
-                calledNumbers={
-                  liveCalledNumbers.length > 0
-                    ? liveCalledNumbers
-                    : latestCalledNumber
-                      ? [
-                          {
-                            id: `latest-${latestCalledNumber.order}`,
-                            gameSessionId: liveSessionId ?? "",
-                            letter: latestCalledNumber.letter,
-                            number: latestCalledNumber.number,
-                            order: latestCalledNumber.order,
-                            createdAt: new Date().toISOString(),
-                          },
-                        ]
-                      : []
-                }
+                calledNumbers={displayCalledNumbers}
+                isLive={socketConnected && isAutoCalling}
               />
             ) : null}
 
@@ -1337,6 +1504,17 @@ export function GameOperations() {
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {hasClearableQueue && queue.length === 0 ? (
+                  <LoadingButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setClearQueueOpen(true)}
+                    isLoading={clearQueue.isPending}
+                    loadingLabel="Clearing..."
+                  >
+                    Clear Waiting Queue
+                  </LoadingButton>
+                ) : null}
                 <QueueOrderButtons
                   slotId={registrationOpenGame.slotId}
                   reorderableSlots={reorderableSlots}
@@ -1397,18 +1575,17 @@ export function GameOperations() {
               gameRuleKey={registrationOpenGame.gameRule?.key}
               gameRuleName={registrationOpenGame.gameRule?.name}
             />
-            {registrationOpenGame.operationMode === "AUTO" &&
-            registrationSecondsLeft != null &&
-            registrationSecondsLeft > 0 ? (
-              <RegistrationCountdown
-                secondsLeft={registrationSecondsLeft}
-                preparing={
-                  currentGame?.slotId === registrationOpenGame.slotId &&
-                  (currentGame.playerStatus === "playing" ||
-                    currentGame.playerStatus === "winnerWindow")
-                }
-              />
-            ) : null}
+            <p className="text-sm text-muted-foreground">
+              {getGameOperationStatusHint(
+                registrationOpenGame,
+                {
+                  secondsUntilRegistrationClose: registrationSecondsLeft,
+                  isSameSlotAsCurrentGame:
+                    currentGame?.slotId === registrationOpenGame.slotId,
+                },
+                timeConfig ?? undefined,
+              )}
+            </p>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 md:grid-cols-3">
@@ -1485,7 +1662,8 @@ export function GameOperations() {
         </Card>
       )}
 
-      {/* Empty state - no games */}
+      {/* Empty state + queue */}
+      <div ref={queueSectionRef} className="scroll-mt-4 space-y-6">
       {!currentGame && !registrationOpenGame && queue.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -1508,17 +1686,31 @@ export function GameOperations() {
       {queue.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Queue</CardTitle>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle>Queue</CardTitle>
+              {hasClearableQueue ? (
+                <LoadingButton
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setClearQueueOpen(true)}
+                  isLoading={clearQueue.isPending}
+                  loadingLabel="Clearing..."
+                  className="self-start sm:self-auto"
+                >
+                  Clear Waiting Queue
+                </LoadingButton>
+              ) : null}
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
+            <div className="max-h-[min(28rem,55vh)] space-y-2 overflow-y-auto overscroll-y-contain pr-1">
               {queue.map((game) => {
                 const queuePosition =
                   reorderableSlots.findIndex((slot) => slot.slotId === game.slotId) + 1;
 
                 return (
                 <div
-                  key={game.slotId}
+                  key={getOperationItemKey(game)}
                   className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="flex min-w-0 items-center gap-3 sm:gap-4">
@@ -1577,6 +1769,7 @@ export function GameOperations() {
           </CardContent>
         </Card>
       )}
+      </div>
 
       <Dialog
         open={isCreateGameModalOpen}
@@ -1603,7 +1796,7 @@ export function GameOperations() {
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a game rule" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" className="z-[100] max-h-60">
                   {activeGameRules.map((rule) => (
                     <SelectItem key={rule.id} value={rule.id}>
                       {rule.name}
@@ -1617,59 +1810,6 @@ export function GameOperations() {
                 </p>
               ) : null}
             </div>
-
-            <div className="space-y-2">
-              <Label>Operation mode</Label>
-              <Select
-                value={createOperationMode}
-                onValueChange={(value) =>
-                  setCreateOperationMode(value as GameOperationMode)
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MANUAL">Manual</SelectItem>
-                  <SelectItem value="AUTO">Automatic</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {createOperationMode === "AUTO" ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="registration-duration">
-                    Registration Duration (seconds)
-                  </Label>
-                  <Input
-                    id="registration-duration"
-                    type="number"
-                    min={10}
-                    max={600}
-                    value={createRegistrationDurationSeconds}
-                    onChange={(event) =>
-                      setCreateRegistrationDurationSeconds(event.target.value)
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="auto-call-interval">
-                    Auto-call Interval (seconds)
-                  </Label>
-                  <Input
-                    id="auto-call-interval"
-                    type="number"
-                    min={3}
-                    max={60}
-                    value={createAutoCallIntervalSeconds}
-                    onChange={(event) =>
-                      setCreateAutoCallIntervalSeconds(event.target.value)
-                    }
-                  />
-                </div>
-              </div>
-            ) : null}
 
             {createGameError ? (
               <p className="text-sm text-destructive">{createGameError}</p>
@@ -1690,44 +1830,22 @@ export function GameOperations() {
                   return;
                 }
 
-                const registrationDurationSeconds = Number(
-                  createRegistrationDurationSeconds,
+                const defaults = getCreateFormDefaults(
+                  defaultOperationMode,
+                  timeConfig,
                 );
-                const autoCallIntervalSeconds = Number(
-                  createAutoCallIntervalSeconds,
-                );
-
-                if (
-                  createOperationMode === "AUTO" &&
-                  (!Number.isFinite(registrationDurationSeconds) ||
-                    registrationDurationSeconds < 10 ||
-                    registrationDurationSeconds > 600)
-                ) {
-                  setCreateGameError(
-                    "Registration duration must be between 10 and 600 seconds.",
-                  );
-                  return;
-                }
-
-                if (
-                  createOperationMode === "AUTO" &&
-                  (!Number.isFinite(autoCallIntervalSeconds) ||
-                    autoCallIntervalSeconds < 3 ||
-                    autoCallIntervalSeconds > 60)
-                ) {
-                  setCreateGameError(
-                    "Auto-call interval must be between 3 and 60 seconds.",
-                  );
-                  return;
-                }
 
                 createGame.mutate({
                   gameRuleId: selectedRuleId,
-                  operationMode: createOperationMode,
-                  ...(createOperationMode === "AUTO"
+                  operationMode: defaults.operationMode,
+                  ...(defaults.operationMode === "AUTO"
                     ? {
-                        registrationDurationSeconds,
-                        autoCallIntervalSeconds,
+                        registrationDurationSeconds: Number(
+                          defaults.registrationDurationSeconds,
+                        ),
+                        autoCallIntervalSeconds: Number(
+                          defaults.autoCallIntervalSeconds,
+                        ),
                       }
                     : {}),
                 });
@@ -1861,9 +1979,10 @@ export function GameOperations() {
             </div>
 
             <CalledNumbersStrip
-              calledNumbers={liveCalledNumbers}
+              calledNumbers={displayCalledNumbers}
               compact
               title="Session called numbers"
+              isLive={socketConnected && isAutoCalling}
             />
 
             {callNumberError && (
@@ -2004,6 +2123,19 @@ export function GameOperations() {
       />
 
       <ConfirmActionDialog
+        open={clearQueueOpen}
+        onOpenChange={setClearQueueOpen}
+        title="Clear waiting queue"
+        description={clearQueueConfirmDescription}
+        confirmLabel="Clear waiting queue"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          clearQueue.mutate(undefined);
+        }}
+        isPending={clearQueue.isPending}
+      />
+
+      <ConfirmActionDialog
         open={Boolean(rejectClaimTarget)}
         onOpenChange={(open) => {
           if (!open) {
@@ -2115,11 +2247,15 @@ function CalledNumbersStrip({
   calledNumbers,
   compact = false,
   title = "Called this session",
+  isLive = false,
 }: {
   calledNumbers: CalledNumber[];
   compact?: boolean;
   title?: string;
+  isLive?: boolean;
 }) {
+  const [showAll, setShowAll] = useState(false);
+
   if (calledNumbers.length === 0) {
     return (
       <div className="rounded-lg border border-dashed bg-white/70 px-4 py-3 text-sm text-muted-foreground">
@@ -2128,26 +2264,99 @@ function CalledNumbersStrip({
     );
   }
 
-  const latestId = calledNumbers.at(-1)?.id;
+  const sorted = [...calledNumbers].sort((left, right) => left.order - right.order);
+  const latest = sorted.at(-1)!;
+  const recent = sorted.slice(-9, -1).reverse();
+  const latestId = latest.id;
 
   return (
     <div className="rounded-lg border bg-white/80 px-4 py-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {title}
         </p>
-        <span className="text-xs text-muted-foreground">{calledNumbers.length} balls</span>
+        <div className="flex items-center gap-2">
+          {isLive ? (
+            <Badge
+              variant="outline"
+              className="border-emerald-300 bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-700"
+            >
+              Live
+            </Badge>
+          ) : null}
+          <span className="text-xs text-muted-foreground">
+            {sorted.length} balls
+          </span>
+        </div>
       </div>
-      <div className={cn("flex flex-wrap gap-2", compact && "max-h-28 overflow-y-auto pr-1")}>
-        {calledNumbers.map((calledNumber) => (
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex shrink-0 flex-col items-center">
+          <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Latest · #{latest.order}
+          </p>
           <BingoBall
-            key={calledNumber.id}
-            letter={calledNumber.letter}
-            number={calledNumber.number}
-            isLatest={calledNumber.id === latestId}
+            letter={latest.letter}
+            number={latest.number}
+            size="lg"
+            isLatest
           />
-        ))}
+        </div>
+
+        {recent.length > 0 ? (
+          <div className="min-w-0 flex-1">
+            <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Recent
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {recent.map((calledNumber) => (
+                <div
+                  key={calledNumber.id}
+                  className="flex shrink-0 flex-col items-center gap-1"
+                >
+                  <BingoBall
+                    letter={calledNumber.letter}
+                    number={calledNumber.number}
+                    isLatest={calledNumber.id === latestId}
+                  />
+                  <span className="text-[9px] text-muted-foreground">
+                    #{calledNumber.order}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
+
+      {sorted.length > 1 ? (
+        <div className="mt-3 border-t pt-3">
+          <button
+            type="button"
+            className="text-xs font-medium text-primary hover:underline"
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll ? "Hide full board" : `Show all ${sorted.length} balls`}
+          </button>
+          {showAll ? (
+            <div
+              className={cn(
+                "mt-2 flex flex-wrap gap-2",
+                compact && "max-h-28 overflow-y-auto pr-1",
+              )}
+            >
+              {sorted.map((calledNumber) => (
+                <BingoBall
+                  key={calledNumber.id}
+                  letter={calledNumber.letter}
+                  number={calledNumber.number}
+                  isLatest={calledNumber.id === latestId}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2461,32 +2670,3 @@ function OperationModeSegmentButton({
     </button>
   );
 }
-
-/**
- * Single registration-countdown line. The ticking seconds value is owned by
- * the parent so every countdown surface (hint, badge, this line) agrees.
- */
-function RegistrationCountdown({
-  secondsLeft,
-  preparing = false,
-  className,
-}: {
-  secondsLeft: number;
-  preparing?: boolean;
-  className?: string;
-}) {
-  if (preparing || secondsLeft <= 0) {
-    return (
-      <p className={cn("text-sm font-medium text-blue-700", className)}>
-        Starting soon…
-      </p>
-    );
-  }
-
-  return (
-    <p className={cn("text-sm font-medium text-blue-700", className)}>
-      Registration closes in {secondsLeft}s
-    </p>
-  );
-}
-

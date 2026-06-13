@@ -34,12 +34,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f7faf8_0%,#f2f7f5_40%,#eef4f2_100%)]">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col lg:flex-row">
+    <div className="min-h-dvh bg-[linear-gradient(180deg,#f7faf8_0%,#f2f7f5_40%,#eef4f2_100%)]">
+      <div className="mx-auto flex h-dvh w-full max-w-[1600px] flex-col overflow-hidden lg:flex-row">
         <AdminSidebar pathname={pathname} />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:min-h-screen">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AdminTopbar pathname={pathname} />
-          <main className="flex-1 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+          <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
             {children}
           </main>
         </div>

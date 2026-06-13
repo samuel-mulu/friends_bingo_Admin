@@ -16,7 +16,7 @@ import {
 
 export function AdminSidebar({ pathname }: { pathname: string }) {
   return (
-    <aside className="hidden w-72 shrink-0 border-r border-border/60 bg-white/80 px-4 py-5 backdrop-blur lg:flex lg:flex-col">
+    <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-border/60 bg-white/80 px-4 py-5 backdrop-blur lg:flex lg:flex-col">
       <SidebarContent pathname={pathname} />
     </aside>
   );

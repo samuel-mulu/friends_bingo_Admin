@@ -277,6 +277,19 @@ export function reorderAdminSlots(slotIds: string[]) {
   });
 }
 
+export interface ClearQueueResponse {
+  clearedSlotsCount: number;
+  cancelledEmptyRegistration: boolean;
+  keptRegistration: boolean;
+}
+
+export function clearAdminQueue() {
+  return apiRequest<ClearQueueResponse>({
+    url: "/admin/slots/clear-queue",
+    method: "POST",
+  });
+}
+
 export function cancelBlockingSession(sessionId: string) {
   return apiRequest<{
     success: true;

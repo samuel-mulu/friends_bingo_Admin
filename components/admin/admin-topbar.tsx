@@ -19,7 +19,7 @@ export function AdminTopbar({ pathname }: { pathname: string }) {
   const { session, logout } = useAuth();
 
   return (
-    <header className="sticky top-0 z-20 border-b border-border/60 bg-white/80 backdrop-blur">
+    <header className="z-20 shrink-0 border-b border-border/60 bg-white/80 backdrop-blur">
       <div className="flex items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:px-8">
         <div className="flex min-w-0 items-center gap-3">
           <AdminMobileNav pathname={pathname} />

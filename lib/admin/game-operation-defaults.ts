@@ -178,6 +178,10 @@ export function getGameOperationStatusHint(
   if (game.playerStatus === "playing") {
     if ((game.calledNumbersCount ?? 0) === 0) {
       if (context.secondsUntilNextBall != null) {
+        if (context.secondsUntilNextBall <= 0) {
+          return "Waiting for first ball · calling now…";
+        }
+
         return `Waiting for first ball · ${context.secondsUntilNextBall}s`;
       }
 
@@ -185,6 +189,10 @@ export function getGameOperationStatusHint(
     }
 
     if (context.secondsUntilNextBall != null) {
+      if (context.secondsUntilNextBall <= 0) {
+        return `Auto-call every ${autoCallIntervalSec}s · calling next ball…`;
+      }
+
       return `Auto-call every ${autoCallIntervalSec}s · next in ${context.secondsUntilNextBall}s`;
     }
 
@@ -201,6 +209,13 @@ export function getGameOperationStatusHint(
     game.rawStatus === "NEXT"
   ) {
     if (context.isSameSlotAsCurrentGame) {
+      if (
+        context.secondsUntilRegistrationClose != null &&
+        context.secondsUntilRegistrationClose > 0
+      ) {
+        return `Registration open · closes in ${context.secondsUntilRegistrationClose}s`;
+      }
+
       return "Registration closed · preparing game…";
     }
 

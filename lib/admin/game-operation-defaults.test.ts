@@ -222,6 +222,32 @@ describe("game-operation-defaults", () => {
           operationMode: "AUTO",
           playerStatus: "playing",
           operationStatus: "live",
+          autoCallEnabled: true,
+          autoCallIntervalMs: 7000,
+          calledNumbersCount: 3,
+        }),
+        { secondsUntilNextBall: 0 },
+      ),
+    ).toBe("Auto-call every 7s · calling next ball…");
+
+    expect(
+      getGameOperationStatusHint(
+        createOperationGame({
+          operationMode: "AUTO",
+          playerStatus: "playing",
+          operationStatus: "live",
+          calledNumbersCount: 0,
+        }),
+        { secondsUntilNextBall: 0 },
+      ),
+    ).toBe("Waiting for first ball · calling now…");
+
+    expect(
+      getGameOperationStatusHint(
+        createOperationGame({
+          operationMode: "AUTO",
+          playerStatus: "playing",
+          operationStatus: "live",
           calledNumbersCount: 0,
         }),
         { secondsUntilNextBall: 5 },
@@ -252,5 +278,18 @@ describe("game-operation-defaults", () => {
     expect(
       getGameOperationStatusHint(createOperationGame({ operationMode: "MANUAL" })),
     ).toBe("Admin controls this game");
+
+    expect(
+      getGameOperationStatusHint(
+        createOperationGame({
+          operationMode: "AUTO",
+          scheduledStartAt: "2026-06-10T12:01:00.000Z",
+        }),
+        {
+          secondsUntilRegistrationClose: 18,
+          isSameSlotAsCurrentGame: true,
+        },
+      ),
+    ).toBe("Registration open · closes in 18s");
   });
 });

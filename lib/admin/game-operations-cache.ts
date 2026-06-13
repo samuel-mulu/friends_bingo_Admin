@@ -141,7 +141,14 @@ export function upsertCalledNumber(
   const queryKey = calledNumbersQueryKey(sessionId);
   const current = queryClient.getQueryData<CalledNumbersCache>(queryKey);
 
-  if (current?.calledNumbers.some((entry) => entry.id === calledNumber.id)) {
+  if (
+    current?.calledNumbers.some(
+      (entry) =>
+        entry.id === calledNumber.id ||
+        (entry.order === calledNumber.order &&
+          entry.number === calledNumber.number),
+    )
+  ) {
     return current;
   }
 
@@ -155,6 +162,19 @@ export function upsertCalledNumber(
 
   queryClient.setQueryData(queryKey, next);
   return next;
+}
+
+export function getLatestCalledNumberOrder(
+  calledNumbers: CalledNumber[],
+): number {
+  if (calledNumbers.length === 0) {
+    return 0;
+  }
+
+  return calledNumbers.reduce(
+    (latest, entry) => Math.max(latest, entry.order),
+    0,
+  );
 }
 
 export function logCalledNumberEvent(calledNumber: CalledNumber): void {
@@ -271,6 +291,33 @@ export function isCalledNumberForActiveSession(
   );
 }
 
+export function parseAutoCallScheduleFromPayload(
+  payload: unknown,
+): Pick<
+  OperationSocketPatch,
+  "nextAutoCallAt" | "autoCallEnabled" | "autoCallIntervalMs"
+> | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const candidate = payload as {
+    nextAutoCallAt?: string | null;
+    autoCallEnabled?: boolean;
+    autoCallIntervalMs?: number | null;
+  };
+
+  if (!("nextAutoCallAt" in candidate) && candidate.autoCallEnabled !== true) {
+    return null;
+  }
+
+  return {
+    nextAutoCallAt: candidate.nextAutoCallAt,
+    autoCallEnabled: candidate.autoCallEnabled,
+    autoCallIntervalMs: candidate.autoCallIntervalMs,
+  };
+}
+
 export function normalizeCalledNumberPayload(payload: unknown): CalledNumber | null {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -302,6 +349,64 @@ export function normalizeCalledNumberPayload(payload: unknown): CalledNumber | n
 
 export function invalidateOperationsCache(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: operationsQueryKey });
+}
+
+/**
+ * Ensures at most one operations row per slot in the waiting queue.
+ * When duplicates exist (bare NEXT slot + READY session), keep the session row.
+ */
+export function dedupeOperationQueue<T extends GameOperationItem>(
+  items: T[],
+): T[] {
+  const bySlotId = new Map<string, T>();
+
+  for (const item of items) {
+    const existing = bySlotId.get(item.slotId);
+    if (!existing) {
+      bySlotId.set(item.slotId, item);
+      continue;
+    }
+
+    if (!existing.sessionId && item.sessionId) {
+      bySlotId.set(item.slotId, item);
+    }
+  }
+
+  return [...bySlotId.values()].sort(
+    (left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0),
+  );
+}
+
+export function getOperationItemKey(item: GameOperationItem): string {
+  return item.sessionId
+    ? `${item.slotId}:${item.sessionId}`
+    : `${item.slotId}:slot`;
+}
+
+export function optimisticallyClearWaitingQueue(
+  queryClient: QueryClient,
+  options: {
+    keptRegistration: boolean;
+    cancelledEmptyRegistration: boolean;
+  },
+): void {
+  const current = queryClient.getQueryData<GameOperationsCurrentResponse>(
+    operationsQueryKey,
+  );
+
+  if (!current) {
+    return;
+  }
+
+  queryClient.setQueryData<GameOperationsCurrentResponse>(operationsQueryKey, {
+    ...current,
+    registrationOpenGame:
+      options.keptRegistration && !options.cancelledEmptyRegistration
+        ? current.registrationOpenGame
+        : null,
+    queue: [],
+    timestamp: new Date().toISOString(),
+  });
 }
 
 const TERMINAL_GAME_STATUSES = new Set(["FINISHED", "CANCELLED"]);

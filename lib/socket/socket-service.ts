@@ -1,11 +1,13 @@
 import { io, Socket } from "socket.io-client";
 
 type ConnectionListener = (connected: boolean) => void;
+type EventHandler = (data: unknown) => void;
 
 export class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private connectionListeners = new Set<ConnectionListener>();
+  private eventHandlers = new Map<string, Set<EventHandler>>();
 
   connect(socketBaseUrl: string, token: string) {
     const normalizedToken = token.trim();
@@ -17,7 +19,8 @@ export class SocketService {
       return;
     }
 
-    this.disconnect();
+    this.detachRegisteredHandlers();
+    this.disconnectSocketOnly();
 
     this.token = normalizedToken;
 
@@ -46,24 +49,34 @@ export class SocketService {
       this.notifyConnectionListeners(false);
     });
 
+    this.attachRegisteredHandlers();
     this.socket.connect();
   }
 
   disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket.removeAllListeners();
-      this.socket = null;
-    }
+    this.detachRegisteredHandlers();
+    this.disconnectSocketOnly();
     this.token = null;
     this.notifyConnectionListeners(false);
   }
 
-  on(event: string, handler: (data: unknown) => void) {
+  on(event: string, handler: EventHandler) {
+    let handlers = this.eventHandlers.get(event);
+    if (!handlers) {
+      handlers = new Set<EventHandler>();
+      this.eventHandlers.set(event, handlers);
+    }
+
+    handlers.add(handler);
     this.socket?.on(event, handler);
   }
 
-  off(event: string, handler?: (data: unknown) => void) {
+  off(event: string, handler?: EventHandler) {
+    if (!handler) {
+      return;
+    }
+
+    this.eventHandlers.get(event)?.delete(handler);
     this.socket?.off(event, handler);
   }
 
@@ -78,6 +91,40 @@ export class SocketService {
 
   get isConnected(): boolean {
     return this.socket?.connected ?? false;
+  }
+
+  private attachRegisteredHandlers() {
+    if (!this.socket) {
+      return;
+    }
+
+    for (const [event, handlers] of this.eventHandlers) {
+      for (const handler of handlers) {
+        this.socket.on(event, handler);
+      }
+    }
+  }
+
+  private detachRegisteredHandlers() {
+    if (!this.socket) {
+      return;
+    }
+
+    for (const [event, handlers] of this.eventHandlers) {
+      for (const handler of handlers) {
+        this.socket.off(event, handler);
+      }
+    }
+  }
+
+  private disconnectSocketOnly() {
+    if (!this.socket) {
+      return;
+    }
+
+    this.socket.disconnect();
+    this.socket.removeAllListeners();
+    this.socket = null;
   }
 
   private notifyConnectionListeners(connected: boolean) {
