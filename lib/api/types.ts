@@ -119,14 +119,22 @@ export type DepositStatus =
   | "REJECTED"
   | "MANUAL_REVIEW";
 
+export interface AdminDepositVerifiedData {
+  verificationSource?: string;
+  decision?: string;
+}
+
 export interface AdminDeposit {
   id: string;
   userId: string;
   provider: PaymentProvider;
   amount: string;
   transactionRef: string;
+  receiptUrl: string | null;
+  walletTransactionId: string | null;
   status: DepositStatus;
   rejectionReason: string | null;
+  verifiedData?: AdminDepositVerifiedData | null;
   createdAt: string;
   verifiedAt: string | null;
   updatedAt: string;

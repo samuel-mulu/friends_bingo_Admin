@@ -39,6 +39,22 @@ const pageSize = 20;
 const depositsQueryKey = (page: number) => ["admin", "deposits", page] as const;
 const actionableStatuses = new Set(["PENDING", "MANUAL_REVIEW", "VERIFYING"]);
 
+function isAutoApprovedTelebirr(deposit: AdminDeposit): boolean {
+  return (
+    deposit.provider === "TELEBIRR" &&
+    deposit.status === "APPROVED" &&
+    deposit.verifiedData?.verificationSource !== "Manual admin approval"
+  );
+}
+
+function showReviewActions(deposit: AdminDeposit): boolean {
+  if (isAutoApprovedTelebirr(deposit)) {
+    return false;
+  }
+
+  return actionableStatuses.has(deposit.status);
+}
+
 export function DepositsManagement() {
   const [page, setPage] = useState(1);
   const [approveTarget, setApproveTarget] = useState<AdminDeposit | null>(null);
@@ -78,7 +94,7 @@ export function DepositsManagement() {
   const summary = useMemo(() => {
     const items = depositsQuery.data?.items ?? [];
     const pendingReview = items.filter((deposit) =>
-      actionableStatuses.has(deposit.status),
+      showReviewActions(deposit),
     ).length;
 
     return { pendingReview };
@@ -88,17 +104,17 @@ export function DepositsManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Deposits"
-        description="Review incoming deposit requests, approve verified payments, and capture clear rejection reasons when a credit should not reach the wallet."
+        description="View deposit history, open Telebirr receipts, and complete manual review only when automatic verification needs finance follow-up."
       />
 
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
-              <CardTitle>Deposit queue</CardTitle>
+              <CardTitle>Deposit history</CardTitle>
               <CardDescription>
-                Monitor automated verification outcomes and complete any manual
-                finance decisions from one place.
+                Telebirr deposits with valid receipts are approved automatically.
+                Manual actions remain available for CBE and manual-review cases.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -114,7 +130,7 @@ export function DepositsManagement() {
 
         <CardContent className="px-0 pt-0">
           {depositsQuery.isLoading ? (
-            <AdminTableSkeleton columns={7} />
+            <AdminTableSkeleton columns={9} />
           ) : depositsQuery.isError ? (
             <AdminErrorState
               title="Could not load deposits"
@@ -136,7 +152,9 @@ export function DepositsManagement() {
                   <TableRow>
                     <TableHead>Player</TableHead>
                     <TableHead>Provider</TableHead>
-                    <TableHead>Transaction Ref</TableHead>
+                    <TableHead>Reference</TableHead>
+                    <TableHead>Receipt</TableHead>
+                    <TableHead>Wallet Tx</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Created</TableHead>
@@ -145,7 +163,7 @@ export function DepositsManagement() {
                 </TableHeader>
                 <TableBody>
                   {depositsQuery.data.items.map((deposit) => {
-                    const canReview = actionableStatuses.has(deposit.status);
+                    const canReview = showReviewActions(deposit);
 
                     return (
                       <TableRow key={deposit.id}>
@@ -164,6 +182,29 @@ export function DepositsManagement() {
                           </span>
                         </TableCell>
                         <TableCell>
+                          {deposit.receiptUrl ? (
+                            <a
+                              href={deposit.receiptUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary underline-offset-4 hover:underline"
+                            >
+                              View receipt
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {deposit.walletTransactionId ? (
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {deposit.walletTransactionId}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
                           <AdminStatusBadge status={deposit.status} />
                         </TableCell>
                         <TableCell className="text-right font-medium">
@@ -171,26 +212,28 @@ export function DepositsManagement() {
                         </TableCell>
                         <TableCell>{formatDateTime(deposit.createdAt)}</TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={!canReview}
-                              onClick={() => setApproveTarget(deposit)}
-                            >
-                              <CheckCircle2 className="size-4" />
-                              Approve
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              disabled={!canReview}
-                              onClick={() => setRejectTarget(deposit)}
-                            >
-                              <XCircle className="size-4" />
-                              Reject
-                            </Button>
-                          </div>
+                          {canReview ? (
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setApproveTarget(deposit)}
+                              >
+                                <CheckCircle2 className="size-4" />
+                                Approve
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setRejectTarget(deposit)}
+                              >
+                                <XCircle className="size-4" />
+                                Reject
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
