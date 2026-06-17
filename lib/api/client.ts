@@ -1,14 +1,13 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 
-import { clearStoredSession, getStoredAccessToken } from "@/lib/auth/storage";
+import { clearStoredSession } from "@/lib/auth/storage";
 import type {
   ApiErrorEnvelope,
   ApiSuccessEnvelope,
   PaginatedResult,
 } from "@/lib/api/types";
 
-const baseURL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || "http://localhost:3002";
+const baseURL = "/api/backend";
 
 export class ApiError extends Error {
   statusCode?: number;
@@ -35,14 +34,9 @@ export const apiClient = axios.create({
   },
 });
 
+// Browser requests go through the same-origin Next proxy. The proxy reads the
+// httpOnly access_token cookie and forwards Authorization to the backend.
 apiClient.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = getStoredAccessToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-  }
-
   return config;
 });
 
@@ -54,6 +48,7 @@ apiClient.interceptors.response.use(
 
       if (typeof window !== "undefined" && apiError.statusCode === 401) {
         clearStoredSession();
+        // Use window.location for hard redirect to clear state
         if (window.location.pathname !== "/login") {
           window.location.href = "/login";
         }

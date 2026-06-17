@@ -462,6 +462,25 @@ export function dropTerminalSessionFromOperationsCache(
   });
 }
 
+/**
+ * Handles terminal game events by immediately dropping the session from cache
+ * and triggering an immediate refetch. Use for game:finished, game:cancelled,
+ * and terminal status_changed events.
+ */
+export function handleTerminalGameEvent(
+  queryClient: QueryClient,
+  target: { sessionId?: string | null; slotId?: string | null },
+): void {
+  // Immediately remove from UI cache
+  dropTerminalSessionFromOperationsCache(queryClient, target);
+
+  // Trigger immediate refetch for fresh operations state
+  void queryClient.invalidateQueries({
+    queryKey: operationsQueryKey,
+    refetchType: 'active',
+  });
+}
+
 export function refetchCalledNumbersForSession(
   queryClient: QueryClient,
   sessionId: string | null | undefined,

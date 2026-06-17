@@ -4,7 +4,8 @@ import { LogOut, Shield } from "lucide-react";
 
 import { AdminMobileNav } from "@/components/admin/admin-sidebar";
 import { pageTitleFromPath } from "@/lib/navigation";
-import { useAuth } from "@/lib/auth/auth-provider";
+import { useCookieAuth } from "@/lib/auth/cookie-provider";
+import type { AdminUser } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,8 +16,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export function AdminTopbar({ pathname }: { pathname: string }) {
-  const { session, logout } = useAuth();
+interface AdminTopbarProps {
+  pathname: string;
+  initialUser: AdminUser;
+}
+
+export function AdminTopbar({ pathname, initialUser }: AdminTopbarProps) {
+  const { logout } = useCookieAuth();
+  const user = initialUser;
 
   return (
     <header className="z-20 shrink-0 border-b border-border/60 bg-white/80 backdrop-blur">
@@ -39,12 +46,8 @@ export function AdminTopbar({ pathname }: { pathname: string }) {
                 <Shield className="size-4" />
               </div>
               <div className="hidden text-left sm:block">
-                <div className="text-sm font-medium">
-                  {session?.user.fullName}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {session?.user.phoneNumber}
-                </div>
+                <div className="text-sm font-medium">{user.fullName}</div>
+                <div className="text-xs text-muted-foreground">{user.phoneNumber}</div>
               </div>
             </Button>
           </DropdownMenuTrigger>

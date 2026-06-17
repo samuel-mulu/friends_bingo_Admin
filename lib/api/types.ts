@@ -49,6 +49,7 @@ export interface AdminUser {
 
 export interface AdminSession {
   accessToken: string;
+  refreshToken?: string;
   user: AdminUser;
 }
 
