@@ -1566,10 +1566,6 @@ export function GameOperations() {
                 )}
               </div>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {registrationOpenGame.staticCode}
-              {registrationOpenGame.playCode && ` / ${registrationOpenGame.playCode}`}
-            </p>
             <OperationModeAndRuleLabels
               operationMode={registrationOpenGame.operationMode}
               gameRuleKey={registrationOpenGame.gameRule?.key}
