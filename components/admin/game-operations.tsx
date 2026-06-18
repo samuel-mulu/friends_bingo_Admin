@@ -2,13 +2,13 @@
 
 /**
  * Game Operations - CANONICAL SOURCE OF TRUTH
- * 
+ *
  * This component uses the backend's canonical endpoint GET /games/operations/current
  * which returns the exact same game selection for both Admin and Flutter.
- * 
+ *
  * Backend decides priority: PLAYING > CHECKING > READY > NEXT
  * Frontend MUST NOT apply additional filtering or sorting.
- * 
+ *
  * Sections:
  * A. CURRENT GAME = liveGame or checkingGame
  * B. NEXT REGISTRATION = registrationOpenGame (when not the current game)
@@ -92,6 +92,7 @@ import {
   getCreateFormDefaults,
   getFocusedGameForModeSwitch,
   getGameOperationStatusHint,
+  getOperationModeLockReason,
   readStoredDefaultOperationMode,
   resolveAutoCallIntervalMs,
   shouldPromptApplyModeToCurrentGame,
@@ -161,8 +162,12 @@ const timeConfigQueryKey = ["admin", "time-config"] as const;
 
 export function GameOperations() {
   const queryClient = useQueryClient();
-  const [selectedGameForEdit, setSelectedGameForEdit] = useState<string | null>(null);
-  const [entryFeeDrafts, setEntryFeeDrafts] = useState<Record<string, string>>({});
+  const [selectedGameForEdit, setSelectedGameForEdit] = useState<string | null>(
+    null,
+  );
+  const [entryFeeDrafts, setEntryFeeDrafts] = useState<Record<string, string>>(
+    {},
+  );
   const [entryFeeError, setEntryFeeError] = useState<string | null>(null);
   const [isCreateGameModalOpen, setIsCreateGameModalOpen] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState("");
@@ -283,6 +288,7 @@ export function GameOperations() {
     pendingOperationModeSwitch?.mode ??
     focusedGame?.operationMode ??
     defaultOperationMode;
+  const operationModeLockReason = getOperationModeLockReason(focusedGame);
   const currentSessionId = currentGame?.sessionId ?? null;
   const liveSessionId = currentSessionId;
   const pollOperationsFallback = !socketConnected;
@@ -357,7 +363,9 @@ export function GameOperations() {
     },
     enabled: !!liveSessionId,
     staleTime: 30_000,
-    refetchInterval: pollOperationsFallback ? operationsFallbackPollingMs : false,
+    refetchInterval: pollOperationsFallback
+      ? operationsFallbackPollingMs
+      : false,
   });
 
   useEffect(() => {
@@ -433,7 +441,10 @@ export function GameOperations() {
       return [];
     }
 
-    if ("gameSessionId" in latestCalledNumber && latestCalledNumber.gameSessionId) {
+    if (
+      "gameSessionId" in latestCalledNumber &&
+      latestCalledNumber.gameSessionId
+    ) {
       return [latestCalledNumber as CalledNumber];
     }
 
@@ -589,7 +600,9 @@ export function GameOperations() {
     queryKey: bingoClaimsQueryKey,
     queryFn: async () => {
       const response = await getAdminBingoClaims(1, 10);
-      return response.items.filter((c: AdminBingoClaim) => c.status === "PENDING");
+      return response.items.filter(
+        (c: AdminBingoClaim) => c.status === "PENDING",
+      );
     },
     refetchInterval: socketConnected ? false : 5000,
     enabled: !!checkingGame && isManualChecking,
@@ -774,7 +787,9 @@ export function GameOperations() {
   ]);
 
   useEffect(() => {
-    setDefaultOperationMode(readStoredDefaultOperationMode(window.localStorage));
+    setDefaultOperationMode(
+      readStoredDefaultOperationMode(window.localStorage),
+    );
   }, []);
 
   const openCreateGameModal = () => {
@@ -789,6 +804,10 @@ export function GameOperations() {
 
   const handleDefaultOperationModeChange = (mode: GameOperationMode) => {
     if (mode === headerOperationMode) {
+      return;
+    }
+
+    if (operationModeLockReason) {
       return;
     }
 
@@ -900,7 +919,9 @@ export function GameOperations() {
       await queryClient.cancelQueries({ queryKey: operationsQueryKey });
 
       const previousOperations =
-        queryClient.getQueryData<GameOperationsCurrentResponse>(operationsQueryKey);
+        queryClient.getQueryData<GameOperationsCurrentResponse>(
+          operationsQueryKey,
+        );
       const previousCalledNumbers = liveSessionId
         ? queryClient.getQueryData(calledNumbersQueryKey(liveSessionId))
         : undefined;
@@ -923,7 +944,10 @@ export function GameOperations() {
     },
     onError: (error, _variables, context) => {
       if (context?.previousOperations) {
-        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+        queryClient.setQueryData(
+          operationsQueryKey,
+          context.previousOperations,
+        );
       }
 
       if (context?.liveSessionId && context.previousCalledNumbers) {
@@ -954,7 +978,9 @@ export function GameOperations() {
       scheduleOperationsRefresh(true);
     },
     onError: (error) => {
-      setCallNumberError(getApiErrorMessage(error, "Failed to start auto-call"));
+      setCallNumberError(
+        getApiErrorMessage(error, "Failed to start auto-call"),
+      );
     },
   });
 
@@ -1025,7 +1051,11 @@ export function GameOperations() {
     errorMessage: "Could not update the entry fee.",
     invalidateQueryKeys: [],
     onMutate: ({ gameId, entryFee }) => ({
-      previousOperations: optimisticallyPatchEntryFee(queryClient, gameId, entryFee),
+      previousOperations: optimisticallyPatchEntryFee(
+        queryClient,
+        gameId,
+        entryFee,
+      ),
     }),
     onSuccess: (_, { gameId }) => {
       setSelectedGameForEdit(null);
@@ -1039,7 +1069,10 @@ export function GameOperations() {
     },
     onError: (error, _variables, context) => {
       if (context?.previousOperations) {
-        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+        queryClient.setQueryData(
+          operationsQueryKey,
+          context.previousOperations,
+        );
       }
 
       setEntryFeeError(
@@ -1061,7 +1094,10 @@ export function GameOperations() {
     },
     onError: (_error, _variables, context) => {
       if (context?.previousOperations) {
-        queryClient.setQueryData(operationsQueryKey, context.previousOperations);
+        queryClient.setQueryData(
+          operationsQueryKey,
+          context.previousOperations,
+        );
       }
     },
     onSettled: () => {
@@ -1156,7 +1192,12 @@ export function GameOperations() {
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
         <p className="font-medium">Failed to load game operations</p>
         <p className="text-sm">{getApiErrorMessage(error)}</p>
-        <Button onClick={() => refetch()} className="mt-2" variant="outline" size="sm">
+        <Button
+          onClick={() => refetch()}
+          className="mt-2"
+          variant="outline"
+          size="sm"
+        >
           <RefreshCw className="mr-2 h-4 w-4" />
           Retry
         </Button>
@@ -1192,9 +1233,15 @@ export function GameOperations() {
           <OperationModeHeaderControl
             value={headerOperationMode}
             onChange={handleDefaultOperationModeChange}
-            isLoading={applyOperationModeToCurrentGame.isPending}
+            isLoading={
+              applyOperationModeToCurrentGame.isPending ||
+              Boolean(operationModeLockReason)
+            }
             focusedGameLabel={
-              focusedGame?.playCode ?? focusedGame?.staticCode ?? null
+              operationModeLockReason ??
+              focusedGame?.playCode ??
+              focusedGame?.staticCode ??
+              null
             }
           />
           <Button onClick={openCreateGameModal} className="shrink-0 self-start">
@@ -1268,7 +1315,9 @@ export function GameOperations() {
                       ? Math.max(
                           0,
                           Math.ceil(
-                            (new Date(currentGame.winnerWindowEndsAt).getTime() -
+                            (new Date(
+                              currentGame.winnerWindowEndsAt,
+                            ).getTime() -
                               winnerWindowNow) /
                               1000,
                           ),
@@ -1282,16 +1331,26 @@ export function GameOperations() {
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               {socketConnected ? (
-                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
+                <Badge
+                  variant="outline"
+                  className="border-emerald-300 bg-emerald-50 text-emerald-700"
+                >
                   Realtime connected
                 </Badge>
               ) : (
-                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
-                  Polling every {Math.round(operationsFallbackPollingMs / 1000)}s
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 bg-amber-50 text-amber-800"
+                >
+                  Polling every {Math.round(operationsFallbackPollingMs / 1000)}
+                  s
                 </Badge>
               )}
               {isAutoCalling ? (
-                <Badge variant="outline" className="border-red-300 bg-red-50 text-red-700">
+                <Badge
+                  variant="outline"
+                  className="border-red-300 bg-red-50 text-red-700"
+                >
                   {nextAutoCallLabel}
                 </Badge>
               ) : null}
@@ -1364,17 +1423,18 @@ export function GameOperations() {
                         <div className="flex flex-wrap gap-2">
                           {(currentGame.winnerPayoutsSummary ?? []).map(
                             (winner) => (
-                            <Badge
-                              key={`${winner.cartelaId}-${winner.cartelaNumber}`}
-                              variant="outline"
-                              className="border-violet-300 bg-white text-violet-900"
-                            >
-                              #{winner.cartelaNumber}
-                              {winner.amount
-                                ? ` · ${formatCurrency(winner.amount)}`
-                                : ""}
-                            </Badge>
-                          ))}
+                              <Badge
+                                key={`${winner.cartelaId}-${winner.cartelaNumber}`}
+                                variant="outline"
+                                className="border-violet-300 bg-white text-violet-900"
+                              >
+                                #{winner.cartelaNumber}
+                                {winner.amount
+                                  ? ` · ${formatCurrency(winner.amount)}`
+                                  : ""}
+                              </Badge>
+                            ),
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -1453,7 +1513,9 @@ export function GameOperations() {
                     className="flex-1"
                     size="lg"
                     variant={
-                      currentGame.operationMode === "AUTO" ? "outline" : "default"
+                      currentGame.operationMode === "AUTO"
+                        ? "outline"
+                        : "default"
                     }
                   >
                     <Phone className="mr-2 h-5 w-5" />
@@ -1495,12 +1557,15 @@ export function GameOperations() {
                       : "Registration open"}
                   </CardTitle>
                   <Badge className="bg-blue-100 text-blue-800">
-                    {registrationOpenGame.rawStatus === "NEXT" ? "NEW" : "READY"}
+                    {registrationOpenGame.rawStatus === "NEXT"
+                      ? "NEW"
+                      : "READY"}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {registrationOpenGame.staticCode}
-                  {registrationOpenGame.playCode && ` / ${registrationOpenGame.playCode}`}
+                  {registrationOpenGame.playCode &&
+                    ` / ${registrationOpenGame.playCode}`}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1546,7 +1611,9 @@ export function GameOperations() {
                   // POST /admin/slots/:id/start as an emergency override.
                   <LoadingButton
                     size="sm"
-                    onClick={() => startGame.mutate(registrationOpenGame.slotId)}
+                    onClick={() =>
+                      startGame.mutate(registrationOpenGame.slotId)
+                    }
                     isLoading={isMutationPendingFor(
                       startGame,
                       registrationOpenGame.slotId,
@@ -1594,7 +1661,9 @@ export function GameOperations() {
                     canEdit={canEditEntryFee(
                       registrationOpenGame.registeredCartelasCount,
                     )}
-                    isEditing={selectedGameForEdit === registrationOpenGame.slotId}
+                    isEditing={
+                      selectedGameForEdit === registrationOpenGame.slotId
+                    }
                     draftValue={
                       entryFeeDrafts[registrationOpenGame.slotId] ??
                       registrationOpenGame.entryFee
@@ -1651,7 +1720,8 @@ export function GameOperations() {
                 hint="cartelas"
               />
             </div>
-            {entryFeeError && selectedGameForEdit === registrationOpenGame.slotId ? (
+            {entryFeeError &&
+            selectedGameForEdit === registrationOpenGame.slotId ? (
               <p className="mt-3 text-sm text-destructive">{entryFeeError}</p>
             ) : null}
           </CardContent>
@@ -1660,111 +1730,119 @@ export function GameOperations() {
 
       {/* Empty state + queue */}
       <div ref={queueSectionRef} className="scroll-mt-4 space-y-6">
-      {!currentGame && !registrationOpenGame && queue.length === 0 && (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <div className="mb-4 rounded-full bg-muted p-3">
-              <Plus className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="text-lg font-medium">No games in queue</p>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Create a new game to get started
-            </p>
-            <Button onClick={openCreateGameModal} variant="outline">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Game to Queue
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+        {!currentGame && !registrationOpenGame && queue.length === 0 && (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-12">
+              <div className="mb-4 rounded-full bg-muted p-3">
+                <Plus className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <p className="text-lg font-medium">No games in queue</p>
+              <p className="mb-4 text-sm text-muted-foreground">
+                Create a new game to get started
+              </p>
+              <Button onClick={openCreateGameModal} variant="outline">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Game to Queue
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
-      {/* C. QUEUE */}
-      {queue.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle>Queue</CardTitle>
-              {hasClearableQueue ? (
-                <LoadingButton
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setClearQueueOpen(true)}
-                  isLoading={clearQueue.isPending}
-                  loadingLabel="Clearing..."
-                  className="self-start sm:self-auto"
-                >
-                  Clear Waiting Queue
-                </LoadingButton>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[min(28rem,55vh)] space-y-2 overflow-y-auto overscroll-y-contain pr-1">
-              {queue.map((game) => {
-                const queuePosition =
-                  reorderableSlots.findIndex((slot) => slot.slotId === game.slotId) + 1;
+        {/* C. QUEUE */}
+        {queue.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle>Queue</CardTitle>
+                {hasClearableQueue ? (
+                  <LoadingButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setClearQueueOpen(true)}
+                    isLoading={clearQueue.isPending}
+                    loadingLabel="Clearing..."
+                    className="self-start sm:self-auto"
+                  >
+                    Clear Waiting Queue
+                  </LoadingButton>
+                ) : null}
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="max-h-[min(28rem,55vh)] space-y-2 overflow-y-auto overscroll-y-contain pr-1">
+                {queue.map((game) => {
+                  const queuePosition =
+                    reorderableSlots.findIndex(
+                      (slot) => slot.slotId === game.slotId,
+                    ) + 1;
 
-                return (
-                <div
-                  key={getOperationItemKey(game)}
-                  className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-sm font-medium">
-                      {queuePosition}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{game.gameRule?.name || "Game"}</p>
-                        <Badge variant="outline" className="text-xs">
-                          {game.rawStatus === "READY" ? "Ready" : "New"}
-                        </Badge>
-                        {game.operationMode === "AUTO" ? (
-                          <Badge
-                            variant="outline"
-                            className="border-blue-300 text-xs text-blue-700"
-                          >
-                            Auto
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {game.staticCode} • Entry: {formatCurrency(game.entryFee)} •
-                        Prize: {formatCurrency(game.prizeAmount)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-                    <QueueOrderButtons
-                      slotId={game.slotId}
-                      reorderableSlots={reorderableSlots}
-                      onMove={handleReorder}
-                      reorderAction={reorderAction}
-                      isReordering={reorderSlots.isPending}
-                    />
-                    <LoadingButton
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        setCancelQueuedTarget({
-                          slotId: game.slotId,
-                          label: game.staticCode,
-                        })
-                      }
-                      isLoading={isMutationPendingFor(cancelQueuedSlot, game.slotId)}
-                      loadingLabel="..."
-                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  return (
+                    <div
+                      key={getOperationItemKey(game)}
+                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <Ban className="h-4 w-4" />
-                    </LoadingButton>
-                  </div>
-                </div>
-              );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-sm font-medium">
+                          {queuePosition}
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">
+                              {game.gameRule?.name || "Game"}
+                            </p>
+                            <Badge variant="outline" className="text-xs">
+                              {game.rawStatus === "READY" ? "Ready" : "New"}
+                            </Badge>
+                            {game.operationMode === "AUTO" ? (
+                              <Badge
+                                variant="outline"
+                                className="border-blue-300 text-xs text-blue-700"
+                              >
+                                Auto
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            {game.staticCode} • Entry:{" "}
+                            {formatCurrency(game.entryFee)} • Prize:{" "}
+                            {formatCurrency(game.prizeAmount)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                        <QueueOrderButtons
+                          slotId={game.slotId}
+                          reorderableSlots={reorderableSlots}
+                          onMove={handleReorder}
+                          reorderAction={reorderAction}
+                          isReordering={reorderSlots.isPending}
+                        />
+                        <LoadingButton
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setCancelQueuedTarget({
+                              slotId: game.slotId,
+                              label: game.staticCode,
+                            })
+                          }
+                          isLoading={isMutationPendingFor(
+                            cancelQueuedSlot,
+                            game.slotId,
+                          )}
+                          loadingLabel="..."
+                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        >
+                          <Ban className="h-4 w-4" />
+                        </LoadingButton>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Dialog
@@ -1780,8 +1858,8 @@ export function GameOperations() {
           <DialogHeader>
             <DialogTitle>Add Game to Queue</DialogTitle>
             <DialogDescription>
-              Choose an active game rule. The new game is added to the end of the
-              queue.
+              Choose an active game rule. The new game is added to the end of
+              the queue.
             </DialogDescription>
           </DialogHeader>
 
@@ -1922,7 +2000,9 @@ export function GameOperations() {
                       max={75}
                       value={String(callNumberForm.number)}
                       onChange={(e) =>
-                        setCallNumberForm(toCallNumberPayload(Number(e.target.value)))
+                        setCallNumberForm(
+                          toCallNumberPayload(Number(e.target.value)),
+                        )
                       }
                       disabled={isAutoCalling}
                     />
@@ -1933,7 +2013,8 @@ export function GameOperations() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      const remaining = getRemainingCallNumbersFromList(liveCalledNumbers);
+                      const remaining =
+                        getRemainingCallNumbersFromList(liveCalledNumbers);
                       const next = getRandomCallNumber(remaining);
                       if (next) {
                         setCallNumberForm(next);
@@ -1950,7 +2031,9 @@ export function GameOperations() {
                   {isAutoCalling ? (
                     <LoadingButton
                       variant="destructive"
-                      onClick={() => liveSessionId && stopAutoCall.mutate(liveSessionId)}
+                      onClick={() =>
+                        liveSessionId && stopAutoCall.mutate(liveSessionId)
+                      }
                       isLoading={stopAutoCall.isPending}
                       loadingLabel="Stopping..."
                       disabled={callNumber.isPending || !liveSessionId}
@@ -1961,7 +2044,9 @@ export function GameOperations() {
                   ) : (
                     <LoadingButton
                       variant="secondary"
-                      onClick={() => liveSessionId && startAutoCall.mutate(liveSessionId)}
+                      onClick={() =>
+                        liveSessionId && startAutoCall.mutate(liveSessionId)
+                      }
                       isLoading={startAutoCall.isPending}
                       loadingLabel="Starting..."
                       disabled={callNumber.isPending || !liveSessionId}
@@ -1997,7 +2082,10 @@ export function GameOperations() {
             </Button>
             <LoadingButton
               onClick={() => {
-                if (liveSessionId && isValidCalledNumber(callNumberForm.number)) {
+                if (
+                  liveSessionId &&
+                  isValidCalledNumber(callNumberForm.number)
+                ) {
                   callNumber.mutate({
                     sessionId: liveSessionId,
                     payload: callNumberForm,
@@ -2231,10 +2319,17 @@ function BingoBall({
       )}
       title={`${letter}-${number}`}
     >
-      <span className={cn("leading-none opacity-90", isLarge ? "text-xs" : "text-[9px]")}>
+      <span
+        className={cn(
+          "leading-none opacity-90",
+          isLarge ? "text-xs" : "text-[9px]",
+        )}
+      >
         {letter}
       </span>
-      <span className={cn("leading-none", isLarge ? "text-xl" : "text-xs")}>{number}</span>
+      <span className={cn("leading-none", isLarge ? "text-xl" : "text-xs")}>
+        {number}
+      </span>
     </div>
   );
 }
@@ -2260,7 +2355,9 @@ function CalledNumbersStrip({
     );
   }
 
-  const sorted = [...calledNumbers].sort((left, right) => left.order - right.order);
+  const sorted = [...calledNumbers].sort(
+    (left, right) => left.order - right.order,
+  );
   const latest = sorted.at(-1)!;
   const recent = sorted.slice(-9, -1).reverse();
   const latestId = latest.id;
@@ -2370,7 +2467,9 @@ function QueueOrderButtons({
   reorderAction: { slotId: string; direction: "up" | "down" } | null;
   isReordering?: boolean;
 }) {
-  const currentIndex = reorderableSlots.findIndex((slot) => slot.slotId === slotId);
+  const currentIndex = reorderableSlots.findIndex(
+    (slot) => slot.slotId === slotId,
+  );
   const isMovingUp =
     isReordering &&
     reorderAction?.slotId === slotId &&
@@ -2521,7 +2620,9 @@ function RegistrationStatCard({
         {label}
       </p>
       <div className="mt-2">{value}</div>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      {hint ? (
+        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
@@ -2542,8 +2643,12 @@ function getLetterForNumber(number: number): CallNumberPayload["letter"] {
   return "O";
 }
 
-function getRemainingCallNumbersFromList(calledNumbers: CalledNumber[]): number[] {
-  const used = new Set(calledNumbers.map((calledNumber) => calledNumber.number));
+function getRemainingCallNumbersFromList(
+  calledNumbers: CalledNumber[],
+): number[] {
+  const used = new Set(
+    calledNumbers.map((calledNumber) => calledNumber.number),
+  );
   return Array.from({ length: 75 }, (_, index) => index + 1).filter(
     (number) => !used.has(number),
   );
@@ -2580,7 +2685,10 @@ function OperationModeAndRuleLabels({
       >
         {operationMode === "AUTO" ? "Automatic" : "Manual"}
       </Badge>
-      <Badge variant="outline" className="border-violet-300 bg-violet-50 text-violet-800">
+      <Badge
+        variant="outline"
+        className="border-violet-300 bg-violet-50 text-violet-800"
+      >
         {gameRuleName || gameRuleKey || "Unknown"}
       </Badge>
     </div>

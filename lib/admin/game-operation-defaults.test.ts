@@ -12,7 +12,9 @@ import {
   getCreateFormDefaults,
   getFocusedGameForModeSwitch,
   getGameOperationStatusHint,
+  getOperationModeLockReason,
   getOperationModeHint,
+  isOperationModeLockedAfterRegistration,
   readStoredDefaultOperationMode,
   shouldPromptApplyModeToCurrentGame,
   writeStoredDefaultOperationMode,
@@ -98,11 +100,9 @@ describe("game-operation-defaults", () => {
   });
 
   it("prompts to apply Automatic mode to the current registration game", () => {
-    const currentGame = createOperationGame();
+    const currentGame = createOperationGame({ registeredCartelasCount: 0 });
 
-    expect(
-      shouldPromptApplyModeToCurrentGame(currentGame, "AUTO"),
-    ).toBe(true);
+    expect(shouldPromptApplyModeToCurrentGame(currentGame, "AUTO")).toBe(true);
     expect(getApplyOperationModePrompt("AUTO")).toBe(
       "Switch this game to Automatic?",
     );
@@ -111,9 +111,7 @@ describe("game-operation-defaults", () => {
   it("does not prompt when current game already matches header mode", () => {
     const currentGame = createOperationGame({ operationMode: "AUTO" });
 
-    expect(
-      shouldPromptApplyModeToCurrentGame(currentGame, "AUTO"),
-    ).toBe(false);
+    expect(shouldPromptApplyModeToCurrentGame(currentGame, "AUTO")).toBe(false);
   });
 
   it("uses saved timing defaults when pre-filling the create form", () => {
@@ -197,6 +195,16 @@ describe("game-operation-defaults", () => {
       getGameOperationStatusHint(
         createOperationGame({
           operationMode: "AUTO",
+          registeredCartelasCount: 0,
+          scheduledStartAt: null,
+        }),
+      ),
+    ).toBe("Automatic registration is being prepared...");
+
+    expect(
+      getGameOperationStatusHint(
+        createOperationGame({
+          operationMode: "AUTO",
           scheduledStartAt: "2026-06-10T12:01:00.000Z",
         }),
       ),
@@ -276,7 +284,9 @@ describe("game-operation-defaults", () => {
     ).toBe("Registration closed · preparing game…");
 
     expect(
-      getGameOperationStatusHint(createOperationGame({ operationMode: "MANUAL" })),
+      getGameOperationStatusHint(
+        createOperationGame({ operationMode: "MANUAL" }),
+      ),
     ).toBe("Admin controls this game");
 
     expect(
@@ -291,5 +301,34 @@ describe("game-operation-defaults", () => {
         },
       ),
     ).toBe("Registration open · closes in 18s");
+  });
+
+  it("locks operation mode after READY registration has players", () => {
+    const currentGame = createOperationGame({
+      rawStatus: "READY",
+      registeredCartelasCount: 1,
+      operationMode: "AUTO",
+    });
+
+    expect(isOperationModeLockedAfterRegistration(currentGame)).toBe(true);
+    expect(getOperationModeLockReason(currentGame)).toBe(
+      "Mode locked after players register.",
+    );
+    expect(shouldPromptApplyModeToCurrentGame(currentGame, "MANUAL")).toBe(
+      false,
+    );
+  });
+
+  it("allows operation mode prompt for READY registration before players register", () => {
+    const currentGame = createOperationGame({
+      rawStatus: "READY",
+      registeredCartelasCount: 0,
+      operationMode: "AUTO",
+    });
+
+    expect(isOperationModeLockedAfterRegistration(currentGame)).toBe(false);
+    expect(shouldPromptApplyModeToCurrentGame(currentGame, "MANUAL")).toBe(
+      true,
+    );
   });
 });

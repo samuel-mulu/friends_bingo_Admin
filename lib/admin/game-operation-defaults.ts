@@ -20,10 +20,13 @@ export type CreateGameFormDefaults = {
   autoCallIntervalSeconds: string;
 };
 
-export type TimingConfigLike = Pick<
-  GameTimingConfig,
-  "registrationDurationSeconds" | "autoCallIntervalSeconds"
-> | null | undefined;
+export type TimingConfigLike =
+  | Pick<
+      GameTimingConfig,
+      "registrationDurationSeconds" | "autoCallIntervalSeconds"
+    >
+  | null
+  | undefined;
 
 export function resolveAutoCallIntervalMs(
   game: Pick<GameOperationItem, "autoCallIntervalMs">,
@@ -33,8 +36,10 @@ export function resolveAutoCallIntervalMs(
     return game.autoCallIntervalMs;
   }
 
-  return (timing?.autoCallIntervalSeconds ?? Number(FALLBACK_AUTO_CALL_INTERVAL_SECONDS)) *
-    1000;
+  return (
+    (timing?.autoCallIntervalSeconds ??
+      Number(FALLBACK_AUTO_CALL_INTERVAL_SECONDS)) * 1000
+  );
 }
 
 export function isGameOperationMode(value: string): value is GameOperationMode {
@@ -117,6 +122,16 @@ const blockedOperationModeSwitchStatuses = new Set([
   "cancelled",
   "checking",
 ]);
+
+export function isOperationModeLockedAfterRegistration(
+  game: GameOperationItem | null | undefined,
+): boolean {
+  return Boolean(
+    game &&
+    game.rawStatus === "READY" &&
+    (game.registeredCartelasCount ?? 0) > 0,
+  );
+}
 
 /** Current live/checking game takes priority over next registration. */
 export function getFocusedGameForModeSwitch(operations: {
@@ -227,9 +242,11 @@ export function getGameOperationStatusHint(
       return "Registration closed · preparing game…";
     }
 
-    return game.scheduledStartAt
-      ? "Registration countdown running"
-      : "Automatic — countdown starts when switched to Auto";
+    if (game.scheduledStartAt) {
+      return "Registration countdown running";
+    }
+
+    return "Automatic registration is being prepared...";
   }
 
   return getOperationModeHint("AUTO");
@@ -244,6 +261,10 @@ export function shouldPromptApplyModeToCurrentGame(
   }
 
   if (currentGame.operationMode === newMode) {
+    return false;
+  }
+
+  if (isOperationModeLockedAfterRegistration(currentGame)) {
     return false;
   }
 
@@ -267,8 +288,7 @@ export function buildOperationModeSwitchPayload(
       game.registrationDurationSeconds ??
       Number(defaults.registrationDurationSeconds),
     autoCallIntervalSeconds:
-      game.autoCallIntervalSeconds ??
-      Number(defaults.autoCallIntervalSeconds),
+      game.autoCallIntervalSeconds ?? Number(defaults.autoCallIntervalSeconds),
   };
 }
 
@@ -276,6 +296,14 @@ export function getApplyOperationModePrompt(mode: GameOperationMode): string {
   return mode === "AUTO"
     ? "Switch this game to Automatic?"
     : "Switch this game to Manual?";
+}
+
+export function getOperationModeLockReason(
+  game: GameOperationItem | null | undefined,
+): string | null {
+  return isOperationModeLockedAfterRegistration(game)
+    ? "Mode locked after players register."
+    : null;
 }
 
 export function getApplyOperationModeDescription(
