@@ -91,7 +91,7 @@ const playerUiFields: TimingField[] = [
     label: "Finished results screen (seconds)",
     hint: "",
     min: 1,
-    max: 30,
+    max: 120,
   },
   {
     key: "preparingDisplayMaxSeconds",
