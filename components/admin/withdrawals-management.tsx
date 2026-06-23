@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BadgeCheck, Send, XCircle } from "lucide-react";
+import { BadgeCheck, ExternalLink, Send, XCircle } from "lucide-react";
 
 import {
   approveWithdrawal,
@@ -43,13 +43,23 @@ import {
 const pageSize = 20;
 const withdrawalsQueryKey = (page: number) =>
   ["admin", "withdrawals", page] as const;
-const reversibleStatuses = new Set(["PENDING", "APPROVED"]);
+const reversibleStatuses = new Set(["PENDING"]);
+
+function isValidPayoutUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export function WithdrawalsManagement() {
   const [page, setPage] = useState(1);
   const [approveTarget, setApproveTarget] = useState<AdminWithdrawal | null>(
     null,
   );
+  const [approveUrlError, setApproveUrlError] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<AdminWithdrawal | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminWithdrawal | null>(null);
 
@@ -59,12 +69,19 @@ export function WithdrawalsManagement() {
   });
 
   const approveMutation = useAdminMutation({
-    mutationFn: (withdrawalId: string) => approveWithdrawal(withdrawalId),
-    successMessage: "Withdrawal approved.",
+    mutationFn: ({
+      withdrawalId,
+      payoutTransactionUrl,
+    }: {
+      withdrawalId: string;
+      payoutTransactionUrl: string;
+    }) => approveWithdrawal(withdrawalId, payoutTransactionUrl),
+    successMessage: "Withdrawal approved and paid out.",
     errorMessage: "The withdrawal could not be approved.",
     invalidateQueryKeys: [["admin", "withdrawals"]],
     onSuccess: () => {
       setApproveTarget(null);
+      setApproveUrlError(null);
     },
   });
 
@@ -106,8 +123,9 @@ export function WithdrawalsManagement() {
     return {
       pending: items.filter((withdrawal) => withdrawal.status === "PENDING")
         .length,
-      approved: items.filter((withdrawal) => withdrawal.status === "APPROVED")
-        .length,
+      legacyApproved: items.filter(
+        (withdrawal) => withdrawal.status === "APPROVED",
+      ).length,
     };
   }, [withdrawalsQuery.data?.items]);
 
@@ -115,7 +133,7 @@ export function WithdrawalsManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Withdrawals"
-        description="Approve legitimate cash-outs, reject failed requests with an internal note, and mark paid withdrawals once payout leaves the business account."
+        description="Review cash-out requests, confirm payouts with a transaction URL, and reject invalid requests with an internal note."
       />
 
       <Card>
@@ -124,24 +142,27 @@ export function WithdrawalsManagement() {
             <div className="space-y-1">
               <CardTitle>Withdrawal operations</CardTitle>
               <CardDescription>
-                Keep the payout queue moving while preserving a clear audit trail
-                for every approval, rejection, and paid status update.
+                Approve and pay in one step with a payout transaction URL. Locked
+                funds are released from the player wallet when payout is confirmed.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
               <div className="font-medium text-foreground">
                 {summary.pending.toLocaleString()} pending approvals
               </div>
-              <div className="text-muted-foreground">
-                {summary.approved.toLocaleString()} approved and awaiting payout
-              </div>
+              {summary.legacyApproved > 0 ? (
+                <div className="text-muted-foreground">
+                  {summary.legacyApproved.toLocaleString()} legacy approved
+                  awaiting mark-paid
+                </div>
+              ) : null}
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="px-0 pt-0">
           {withdrawalsQuery.isLoading ? (
-            <AdminTableSkeleton columns={7} />
+            <AdminTableSkeleton columns={8} />
           ) : withdrawalsQuery.isError ? (
             <AdminErrorState
               title="Could not load withdrawals"
@@ -166,6 +187,7 @@ export function WithdrawalsManagement() {
                     <TableHead>Receiver</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Payout URL</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -201,6 +223,21 @@ export function WithdrawalsManagement() {
                         <TableCell className="text-right font-medium">
                           {formatCurrency(withdrawal.amount)}
                         </TableCell>
+                        <TableCell>
+                          {withdrawal.payoutTransactionUrl ? (
+                            <a
+                              href={withdrawal.payoutTransactionUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                            >
+                              View
+                              <ExternalLink className="size-3.5" />
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
                         <TableCell>{formatDateTime(withdrawal.createdAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -208,10 +245,13 @@ export function WithdrawalsManagement() {
                               variant="outline"
                               size="sm"
                               disabled={!canApprove}
-                              onClick={() => setApproveTarget(withdrawal)}
+                              onClick={() => {
+                                setApproveUrlError(null);
+                                setApproveTarget(withdrawal);
+                              }}
                             >
                               <BadgeCheck className="size-4" />
-                              Approve
+                              Approve & pay
                             </Button>
                             <Button
                               variant="destructive"
@@ -222,15 +262,16 @@ export function WithdrawalsManagement() {
                               <XCircle className="size-4" />
                               Reject
                             </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              disabled={!canMarkPaid}
-                              onClick={() => setPaidTarget(withdrawal)}
-                            >
-                              <Send className="size-4" />
-                              Mark paid
-                            </Button>
+                            {canMarkPaid ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setPaidTarget(withdrawal)}
+                              >
+                                <Send className="size-4" />
+                                Mark paid
+                              </Button>
+                            ) : null}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -252,21 +293,40 @@ export function WithdrawalsManagement() {
         onOpenChange={(open) => {
           if (!open) {
             setApproveTarget(null);
+            setApproveUrlError(null);
           }
         }}
-        title="Approve withdrawal"
+        title="Approve and pay withdrawal"
         description={
           approveTarget
-            ? `Approve ${formatCurrency(approveTarget.amount)} for ${approveTarget.user.fullName}. This keeps the funds locked and moves the request to the payout step.`
-            : "Approve this withdrawal."
+            ? `Confirm payout of ${formatCurrency(approveTarget.amount)} to ${approveTarget.user.fullName}. Paste the bank or wallet transaction URL as proof.`
+            : "Approve and pay this withdrawal."
         }
-        confirmLabel="Approve withdrawal"
-        onConfirm={() => {
+        confirmLabel="Approve & pay"
+        field={{
+          label: "Payout transaction URL",
+          placeholder: "https://...",
+          required: true,
+        }}
+        errorMessage={approveUrlError}
+        onConfirm={(value) => {
           if (!approveTarget) {
             return;
           }
 
-          approveMutation.mutate(approveTarget.id);
+          const payoutTransactionUrl = value?.trim() ?? "";
+          if (!isValidPayoutUrl(payoutTransactionUrl)) {
+            setApproveUrlError(
+              "Enter a valid payout URL starting with http:// or https://",
+            );
+            return;
+          }
+
+          setApproveUrlError(null);
+          approveMutation.mutate({
+            withdrawalId: approveTarget.id,
+            payoutTransactionUrl,
+          });
         }}
         isPending={approveMutation.isPending}
       />
@@ -311,10 +371,10 @@ export function WithdrawalsManagement() {
             setPaidTarget(null);
           }
         }}
-        title="Mark withdrawal paid"
+        title="Mark legacy withdrawal paid"
         description={
           paidTarget
-            ? `Confirm payout for ${formatCurrency(paidTarget.amount)} to ${paidTarget.user.fullName}. This will release the locked funds from the wallet ledger.`
+            ? `Confirm payout for ${formatCurrency(paidTarget.amount)} to ${paidTarget.user.fullName}. This is for legacy approved rows only.`
             : "Mark this withdrawal as paid."
         }
         confirmLabel="Mark paid"

@@ -111,14 +111,9 @@ export interface AdminUserDetail {
   };
 }
 
-export type PaymentProvider = "CBE" | "TELEBIRR";
+export type PaymentProvider = "CBE" | "TELEBIRR" | "AWASH" | "BOA";
 
-export type DepositStatus =
-  | "PENDING"
-  | "VERIFYING"
-  | "APPROVED"
-  | "REJECTED"
-  | "MANUAL_REVIEW";
+export type DepositStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export interface AdminDepositVerifiedData {
   verificationSource?: string;
@@ -135,6 +130,9 @@ export interface AdminDeposit {
   walletTransactionId: string | null;
   status: DepositStatus;
   rejectionReason: string | null;
+  verifyEtRequestId?: string | null;
+  verifiedAmount?: string | null;
+  verifiedReceiverName?: string | null;
   verifiedData?: AdminDepositVerifiedData | null;
   createdAt: string;
   verifiedAt: string | null;
@@ -158,6 +156,7 @@ export interface AdminWithdrawal {
   receiverPhone: string | null;
   receiverAccount: string | null;
   payoutRef: string | null;
+  payoutTransactionUrl: string | null;
   status: WithdrawalStatus;
   adminNote: string | null;
   createdAt: string;

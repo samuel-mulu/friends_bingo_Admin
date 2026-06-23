@@ -157,10 +157,14 @@ export function getAdminWithdrawals(page = 1, pageSize = 20) {
   });
 }
 
-export function approveWithdrawal(withdrawalId: string) {
+export function approveWithdrawal(
+  withdrawalId: string,
+  payoutTransactionUrl: string,
+) {
   return apiRequest<AdminWithdrawal>({
     url: `/admin/withdrawals/${withdrawalId}/approve`,
     method: "PATCH",
+    data: { payoutTransactionUrl: payoutTransactionUrl.trim() },
   });
 }
 

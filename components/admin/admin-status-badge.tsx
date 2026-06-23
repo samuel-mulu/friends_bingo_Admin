@@ -16,9 +16,7 @@ export function AdminStatusBadge({ status }: { status: string }) {
     normalized === "PAID" ||
     normalized === "ACTIVE"
       ? "secondary"
-      : normalized === "PENDING" ||
-          normalized === "VERIFYING" ||
-          normalized === "MANUAL_REVIEW"
+      : normalized === "PENDING"
         ? "outline"
         : normalized === "REJECTED" ||
             normalized === "FAILED" ||

@@ -37,7 +37,7 @@ import {
 
 const pageSize = 20;
 const depositsQueryKey = (page: number) => ["admin", "deposits", page] as const;
-const actionableStatuses = new Set(["PENDING", "MANUAL_REVIEW", "VERIFYING"]);
+const actionableStatuses = new Set(["PENDING"]);
 
 function isAutoApprovedTelebirr(deposit: AdminDeposit): boolean {
   return (
@@ -104,7 +104,7 @@ export function DepositsManagement() {
     <div className="space-y-6">
       <PageHeader
         title="Deposits"
-        description="View deposit history, open Telebirr receipts, and complete manual review only when automatic verification needs finance follow-up."
+        description="View deposit history, open Telebirr receipts, and manually resolve rare pending deposits when Verify.ET verification did not finish."
       />
 
       <Card>
@@ -113,24 +113,22 @@ export function DepositsManagement() {
             <div className="space-y-1">
               <CardTitle>Deposit history</CardTitle>
               <CardDescription>
-                Telebirr deposits with valid receipts are approved automatically.
-                Manual actions remain available for CBE and manual-review cases.
+                Deposits are verified automatically through Verify.ET. Manual
+                approve or reject is only for exceptional pending disputes.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
               <div className="font-medium text-foreground">
                 {summary.pendingReview.toLocaleString()} awaiting action
               </div>
-              <div className="text-muted-foreground">
-                Pending, verifying, or manual review
-              </div>
+              <div className="text-muted-foreground">Pending only</div>
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="px-0 pt-0">
           {depositsQuery.isLoading ? (
-            <AdminTableSkeleton columns={9} />
+            <AdminTableSkeleton columns={10} />
           ) : depositsQuery.isError ? (
             <AdminErrorState
               title="Could not load deposits"
@@ -156,6 +154,7 @@ export function DepositsManagement() {
                     <TableHead>Receipt</TableHead>
                     <TableHead>Wallet Tx</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Verified</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -206,6 +205,27 @@ export function DepositsManagement() {
                         </TableCell>
                         <TableCell>
                           <AdminStatusBadge status={deposit.status} />
+                          {deposit.rejectionReason ? (
+                            <div className="mt-1 max-w-[220px] text-xs text-muted-foreground">
+                              {deposit.rejectionReason}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {deposit.verifiedAmount ? (
+                            <div>
+                              <div className="font-medium">
+                                {formatCurrency(deposit.verifiedAmount)}
+                              </div>
+                              {deposit.verifiedReceiverName ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {deposit.verifiedReceiverName}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {formatCurrency(deposit.amount)}
