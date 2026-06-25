@@ -172,6 +172,8 @@ export type GameStatus =
   | "FINISHED"
   | "CANCELLED";
 
+export type GameCategory = "NORMAL" | "BONUS" | "BIG_GAME";
+
 export interface GameRuleSummary {
   id: string;
   key: string;
@@ -191,6 +193,10 @@ export interface AdminGame {
   gameRule: GameRuleSummary | null;
   gameType: string;
   status: GameStatus;
+  category: GameCategory;
+  isBonus: boolean;
+  fixedPrizeAmount: string | null;
+  maxCartelasPerPlayer: number | null;
   sortOrder: number | null;
   playOrder: number | null;
   entryFee: string;
@@ -228,6 +234,12 @@ export type GameOperationMode = "MANUAL" | "AUTO";
 
 export interface CreateGamePayload {
   gameRuleId: string;
+  category?: GameCategory;
+  fixedPrizeAmount?: string;
+  entryFee?: string;
+  maxCartelasPerPlayer?: number;
+  registrationOpensAt?: string;
+  playStartAt?: string;
   operationMode?: GameOperationMode;
   registrationDurationSeconds?: number;
   autoCallIntervalSeconds?: number;

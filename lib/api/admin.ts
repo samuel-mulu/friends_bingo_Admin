@@ -80,6 +80,11 @@ export interface GameOperationItem {
     | 'cancelled';
   operationStatus: 'live' | 'checking' | 'registration' | 'queue';
   gameRule: { id: string; name: string; key: string } | null;
+  category: "NORMAL" | "BONUS" | "BIG_GAME";
+  isBonus: boolean;
+  isBigGame?: boolean;
+  fixedPrizeAmount?: string | null;
+  maxCartelasPerPlayer?: number | null;
   entryFee: string;
   prizePerCartela: string;
   prizeAmount: string;
@@ -122,6 +127,28 @@ export interface GameOperationsCurrentResponse {
 export function getCurrentGameOperations() {
   return apiRequest<GameOperationsCurrentResponse>({
     url: "/games/operations/current",
+    method: "GET",
+  });
+}
+
+export interface CurrentBigGameResponse {
+  sessionId: string;
+  staticCode: string;
+  playCode: string | null;
+  name: string;
+  status: string;
+  category: "BIG_GAME";
+  entryFee: string;
+  prizeAmount: string;
+  fixedPrizeAmount: string | null;
+  registeredCartelasCount: number;
+  registrationOpensAt: string | null;
+  scheduledStartAt: string | null;
+}
+
+export function getCurrentBigGame() {
+  return apiRequest<CurrentBigGameResponse | null>({
+    url: "/games/big-game/current",
     method: "GET",
   });
 }

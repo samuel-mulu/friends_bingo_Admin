@@ -64,10 +64,48 @@ export function writeStoredDefaultOperationMode(
   storage?.setItem(DEFAULT_OPERATION_MODE_STORAGE_KEY, mode);
 }
 
+export function datetimeLocalToIso(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+}
+
 export function buildCreateGameRequestBody(payload: CreateGamePayload) {
   const body: CreateGamePayload = {
     gameRuleId: payload.gameRuleId,
   };
+
+  if (payload.category) {
+    body.category = payload.category;
+  }
+
+  if (payload.fixedPrizeAmount != null) {
+    body.fixedPrizeAmount = payload.fixedPrizeAmount;
+  }
+
+  if (payload.entryFee != null) {
+    body.entryFee = payload.entryFee;
+  }
+
+  if (payload.maxCartelasPerPlayer != null) {
+    body.maxCartelasPerPlayer = payload.maxCartelasPerPlayer;
+  }
+
+  if (payload.registrationOpensAt != null) {
+    body.registrationOpensAt = payload.registrationOpensAt;
+  }
+
+  if (payload.playStartAt != null) {
+    body.playStartAt = payload.playStartAt;
+  }
 
   if (payload.operationMode) {
     body.operationMode = payload.operationMode;

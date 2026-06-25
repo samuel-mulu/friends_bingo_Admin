@@ -42,6 +42,7 @@ import {
   Radio,
   RefreshCw,
   Target,
+  Trophy,
   Users,
   XCircle,
 } from "lucide-react";
@@ -69,6 +70,7 @@ import {
   getAdminGameRules,
   getAdminTimeConfig,
   getCurrentGameOperations,
+  getCurrentBigGame,
   getGameCalledNumbers,
   rejectAdminBingoClaim,
   reorderAdminSlots,
@@ -86,6 +88,7 @@ import { getApiErrorMessage, isApiRateLimitError } from "@/lib/api/errors";
 import { ApiError } from "@/lib/api/client";
 import {
   buildCreateGameRequestBody,
+  datetimeLocalToIso,
   getApplyOperationModeDescription,
   buildOperationModeSwitchPayload,
   getApplyOperationModePrompt,
@@ -108,10 +111,17 @@ import type {
   CallNumberPayload,
   CalledNumber,
   CreateGamePayload,
+  GameCategory,
   GameOperationMode,
 } from "@/lib/api/types";
-import { formatCurrency } from "@/lib/formatters";
+import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
+
+function isBigGameOperationItem(
+  item: Pick<GameOperationItem, "category" | "isBigGame"> | null | undefined,
+): boolean {
+  return Boolean(item?.isBigGame || item?.category === "BIG_GAME");
+}
 import {
   bingoClaimsQueryKey,
   calledNumbersQueryKey,
@@ -171,6 +181,18 @@ export function GameOperations() {
   const [entryFeeError, setEntryFeeError] = useState<string | null>(null);
   const [isCreateGameModalOpen, setIsCreateGameModalOpen] = useState(false);
   const [selectedRuleId, setSelectedRuleId] = useState("");
+  const [createGameCategory, setCreateGameCategory] =
+    useState<GameCategory>("NORMAL");
+  const [bonusFixedPrizeAmount, setBonusFixedPrizeAmount] = useState("");
+  const [bonusMaxCartelasPerPlayer, setBonusMaxCartelasPerPlayer] =
+    useState("5");
+  const [bigGameEntryFee, setBigGameEntryFee] = useState("");
+  const [bigGameFixedPrizeAmount, setBigGameFixedPrizeAmount] = useState("");
+  const [bigGameMaxCartelasPerPlayer, setBigGameMaxCartelasPerPlayer] =
+    useState("20");
+  const [bigGameRegistrationOpensAt, setBigGameRegistrationOpensAt] =
+    useState("");
+  const [bigGamePlayStartAt, setBigGamePlayStartAt] = useState("");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
   const [defaultOperationMode, setDefaultOperationMode] =
     useState<GameOperationMode>("MANUAL");
@@ -245,20 +267,35 @@ export function GameOperations() {
     },
   });
 
+  const { data: scheduledBigGame } = useQuery({
+    queryKey: ["admin", "big-game", "current"],
+    queryFn: getCurrentBigGame,
+    refetchOnWindowFocus: true,
+    staleTime: 2_000,
+    placeholderData: keepPreviousData,
+  });
+
   // Extract canonical sections from backend response
   const liveGame = operations?.liveGame;
   const checkingGame = operations?.checkingGame;
   const registrationOpenGame = operations?.registrationOpenGame;
+  const standardRegistrationOpenGame = isBigGameOperationItem(
+    registrationOpenGame,
+  )
+    ? null
+    : (registrationOpenGame ?? null);
   const queue = useMemo(() => {
-    const rawQueue = operations?.queue ?? [];
-    const registrationSlotId = registrationOpenGame?.slotId;
+    const rawQueue = (operations?.queue ?? []).filter(
+      (item) => !isBigGameOperationItem(item),
+    );
+    const registrationSlotId = standardRegistrationOpenGame?.slotId;
 
     return dedupeOperationQueue(
       registrationSlotId
         ? rawQueue.filter((item) => item.slotId !== registrationSlotId)
         : rawQueue,
     );
-  }, [operations?.queue, registrationOpenGame?.slotId]);
+  }, [operations?.queue, standardRegistrationOpenGame?.slotId]);
   const currentGame = liveGame ?? checkingGame ?? null;
   const isWinnerWindow = currentGame?.playerStatus === "winnerWindow";
   const isManualChecking = checkingGame?.gameRule?.key === "MANUAL";
@@ -280,9 +317,9 @@ export function GameOperations() {
       getFocusedGameForModeSwitch({
         liveGame: liveGame ?? null,
         checkingGame: checkingGame ?? null,
-        registrationOpenGame: registrationOpenGame ?? null,
+        registrationOpenGame: standardRegistrationOpenGame,
       }),
-    [liveGame, checkingGame, registrationOpenGame],
+    [liveGame, checkingGame, standardRegistrationOpenGame],
   );
   const headerOperationMode =
     pendingOperationModeSwitch?.mode ??
@@ -301,6 +338,7 @@ export function GameOperations() {
   const previousLiveSessionIdRef = useRef<string | null>(null);
   const queueSectionRef = useRef<HTMLDivElement | null>(null);
   const scrollToQueueAfterCreateRef = useRef(false);
+  const lastCreateCategoryRef = useRef<GameCategory>("NORMAL");
 
   const scheduleOperationsRefresh = useCallback(
     (immediate = false) => {
@@ -312,6 +350,9 @@ export function GameOperations() {
       const refresh = () => {
         invalidateOperationsCache(queryClient);
         void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
+        void queryClient.invalidateQueries({
+          queryKey: ["admin", "big-game", "current"],
+        });
       };
 
       if (immediate) {
@@ -510,7 +551,7 @@ export function GameOperations() {
         : `Next ball in ${nextAutoCallSeconds}s`;
 
   const registrationScheduledStartAt =
-    registrationOpenGame?.scheduledStartAt ?? null;
+    standardRegistrationOpenGame?.scheduledStartAt ?? null;
   const [registrationNow, setRegistrationNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -534,30 +575,33 @@ export function GameOperations() {
     : Math.max(0, Math.ceil((registrationCloseTime - registrationNow) / 1000));
 
   const showNextRegistration =
-    registrationOpenGame != null &&
-    registrationOpenGame.slotId !== currentGame?.slotId;
+    standardRegistrationOpenGame != null &&
+    standardRegistrationOpenGame.slotId !== currentGame?.slotId;
   const hasClearableQueue =
     queue.length > 0 ||
-    (registrationOpenGame != null &&
-      registrationOpenGame.slotId !== currentGame?.slotId);
+    (standardRegistrationOpenGame != null &&
+      standardRegistrationOpenGame.slotId !== currentGame?.slotId);
   const hasEmptyRegistration =
-    registrationOpenGame != null &&
-    registrationOpenGame.slotId !== currentGame?.slotId &&
-    (registrationOpenGame.registeredCartelasCount ?? 0) === 0;
+    standardRegistrationOpenGame != null &&
+    standardRegistrationOpenGame.slotId !== currentGame?.slotId &&
+    (standardRegistrationOpenGame.registeredCartelasCount ?? 0) === 0;
   const clearQueueConfirmDescription = hasEmptyRegistration
     ? "This will remove only waiting games. Live games and paid registrations will stay. The empty registration will also be removed."
     : "This will remove only waiting games. Live games and paid registrations will stay.";
 
   const reorderableSlots = useMemo(() => {
     const slots = dedupeOperationQueue([
-      ...(registrationOpenGame ? [registrationOpenGame] : []),
+      ...(standardRegistrationOpenGame ? [standardRegistrationOpenGame] : []),
       ...queue,
-    ]);
+    ]).filter((item) => !isBigGameOperationItem(item));
 
     return slots.sort(
       (left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0),
     );
-  }, [registrationOpenGame, queue]);
+  }, [standardRegistrationOpenGame, queue]);
+
+  const showScheduledBigGameCard =
+    scheduledBigGame != null && !isBigGameOperationItem(currentGame);
 
   const { data: gameRules = [] } = useQuery({
     queryKey: ["admin", "game-rules"],
@@ -593,7 +637,7 @@ export function GameOperations() {
         block: "start",
       });
     });
-  }, [operations?.timestamp, queue.length, registrationOpenGame?.slotId]);
+  }, [operations?.timestamp, queue.length, standardRegistrationOpenGame?.slotId]);
 
   // Fetch pending bingo claims for the checking game
   const { data: bingoClaims } = useQuery({
@@ -854,13 +898,17 @@ export function GameOperations() {
   const createGame = useAdminMutation({
     mutationFn: (payload: CreateGamePayload) =>
       createAdminGame(buildCreateGameRequestBody(payload)),
-    successMessage: "Game added to queue.",
     errorMessage: "Could not add the game to the queue.",
     invalidateQueryKeys: [],
     onSuccess: () => {
       setIsCreateGameModalOpen(false);
       setCreateGameError(null);
-      scrollToQueueAfterCreateRef.current = true;
+      if (lastCreateCategoryRef.current === "BIG_GAME") {
+        adminToast.success("Big Game scheduled.");
+      } else {
+        adminToast.success("Game added to queue.");
+        scrollToQueueAfterCreateRef.current = true;
+      }
       scheduleOperationsRefresh(true);
     },
     onError: (error) => {
@@ -1544,7 +1592,7 @@ export function GameOperations() {
       )}
 
       {/* B. NEXT REGISTRATION */}
-      {showNextRegistration && registrationOpenGame && (
+      {showNextRegistration && standardRegistrationOpenGame && (
         <Card className="border-blue-200 bg-gradient-to-br from-blue-50/80 to-slate-50">
           <CardHeader className="pb-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1557,15 +1605,15 @@ export function GameOperations() {
                       : "Registration open"}
                   </CardTitle>
                   <Badge className="bg-blue-100 text-blue-800">
-                    {registrationOpenGame.rawStatus === "NEXT"
+                    {standardRegistrationOpenGame.rawStatus === "NEXT"
                       ? "NEW"
                       : "READY"}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {registrationOpenGame.staticCode}
-                  {registrationOpenGame.playCode &&
-                    ` / ${registrationOpenGame.playCode}`}
+                  {standardRegistrationOpenGame.staticCode}
+                  {standardRegistrationOpenGame.playCode &&
+                    ` / ${standardRegistrationOpenGame.playCode}`}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1581,7 +1629,7 @@ export function GameOperations() {
                   </LoadingButton>
                 ) : null}
                 <QueueOrderButtons
-                  slotId={registrationOpenGame.slotId}
+                  slotId={standardRegistrationOpenGame.slotId}
                   reorderableSlots={reorderableSlots}
                   onMove={handleReorder}
                   reorderAction={reorderAction}
@@ -1592,13 +1640,13 @@ export function GameOperations() {
                   size="sm"
                   onClick={() =>
                     setCancelQueuedTarget({
-                      slotId: registrationOpenGame.slotId,
-                      label: registrationOpenGame.staticCode,
+                      slotId: standardRegistrationOpenGame.slotId,
+                      label: standardRegistrationOpenGame.staticCode,
                     })
                   }
                   isLoading={isMutationPendingFor(
                     cancelQueuedSlot,
-                    registrationOpenGame.slotId,
+                    standardRegistrationOpenGame.slotId,
                   )}
                   loadingLabel="Cancelling..."
                   className="border-red-200 bg-white text-red-600 hover:bg-red-50"
@@ -1606,17 +1654,17 @@ export function GameOperations() {
                   <Ban className="mr-2 h-4 w-4" />
                   Cancel
                 </LoadingButton>
-                {registrationOpenGame.operationMode === "AUTO" ? null : (
+                {standardRegistrationOpenGame.operationMode === "AUTO" ? null : (
                   // Manual Start is hidden for AUTO. Backend still allows
                   // POST /admin/slots/:id/start as an emergency override.
                   <LoadingButton
                     size="sm"
                     onClick={() =>
-                      startGame.mutate(registrationOpenGame.slotId)
+                      startGame.mutate(standardRegistrationOpenGame.slotId)
                     }
                     isLoading={isMutationPendingFor(
                       startGame,
-                      registrationOpenGame.slotId,
+                      standardRegistrationOpenGame.slotId,
                     )}
                     loadingLabel="Starting..."
                     disabled={!!currentGame}
@@ -1634,17 +1682,17 @@ export function GameOperations() {
               </div>
             </div>
             <OperationModeAndRuleLabels
-              operationMode={registrationOpenGame.operationMode}
-              gameRuleKey={registrationOpenGame.gameRule?.key}
-              gameRuleName={registrationOpenGame.gameRule?.name}
+              operationMode={standardRegistrationOpenGame.operationMode}
+              gameRuleKey={standardRegistrationOpenGame.gameRule?.key}
+              gameRuleName={standardRegistrationOpenGame.gameRule?.name}
             />
             <p className="text-sm text-muted-foreground">
               {getGameOperationStatusHint(
-                registrationOpenGame,
+                standardRegistrationOpenGame,
                 {
                   secondsUntilRegistrationClose: registrationSecondsLeft,
                   isSameSlotAsCurrentGame:
-                    currentGame?.slotId === registrationOpenGame.slotId,
+                    currentGame?.slotId === standardRegistrationOpenGame.slotId,
                 },
                 timeConfig ?? undefined,
               )}
@@ -1653,49 +1701,57 @@ export function GameOperations() {
           <CardContent>
             <div className="grid gap-3 md:grid-cols-3">
               <RegistrationStatCard
-                label="Entry Fee"
+                label={standardRegistrationOpenGame.isBonus ? "Bonus Entry" : "Entry Fee"}
                 value={
-                  <EntryFeeEditor
-                    slotId={registrationOpenGame.slotId}
-                    currentFee={registrationOpenGame.entryFee}
-                    canEdit={canEditEntryFee(
-                      registrationOpenGame.registeredCartelasCount,
-                    )}
-                    isEditing={
-                      selectedGameForEdit === registrationOpenGame.slotId
-                    }
-                    draftValue={
-                      entryFeeDrafts[registrationOpenGame.slotId] ??
-                      registrationOpenGame.entryFee
-                    }
-                    isSaving={updateEntryFee.isPending}
-                    registeredCartelasCount={
-                      registrationOpenGame.registeredCartelasCount
-                    }
-                    onStartEdit={startEntryFeeEdit}
-                    onDraftChange={(value) =>
-                      setEntryFeeDrafts((current) => ({
-                        ...current,
-                        [registrationOpenGame.slotId]: value,
-                      }))
-                    }
-                    onSave={saveEntryFee}
-                    onCancel={() => {
-                      setSelectedGameForEdit(null);
-                      setEntryFeeError(null);
-                      setEntryFeeDrafts((current) => {
-                        const next = { ...current };
-                        delete next[registrationOpenGame.slotId];
-                        return next;
-                      });
-                    }}
-                  />
+                  standardRegistrationOpenGame.isBonus ? (
+                    <span className="text-2xl font-bold text-emerald-700">
+                      Free
+                    </span>
+                  ) : (
+                    <EntryFeeEditor
+                      slotId={standardRegistrationOpenGame.slotId}
+                      currentFee={standardRegistrationOpenGame.entryFee}
+                      canEdit={canEditEntryFee(
+                        standardRegistrationOpenGame.registeredCartelasCount,
+                      )}
+                      isEditing={
+                        selectedGameForEdit === standardRegistrationOpenGame.slotId
+                      }
+                      draftValue={
+                        entryFeeDrafts[standardRegistrationOpenGame.slotId] ??
+                        standardRegistrationOpenGame.entryFee
+                      }
+                      isSaving={updateEntryFee.isPending}
+                      registeredCartelasCount={
+                        standardRegistrationOpenGame.registeredCartelasCount
+                      }
+                      onStartEdit={startEntryFeeEdit}
+                      onDraftChange={(value) =>
+                        setEntryFeeDrafts((current) => ({
+                          ...current,
+                          [standardRegistrationOpenGame.slotId]: value,
+                        }))
+                      }
+                      onSave={saveEntryFee}
+                      onCancel={() => {
+                        setSelectedGameForEdit(null);
+                        setEntryFeeError(null);
+                        setEntryFeeDrafts((current) => {
+                          const next = { ...current };
+                          delete next[standardRegistrationOpenGame.slotId];
+                          return next;
+                        });
+                      }}
+                    />
+                  )
                 }
                 hint={
-                  selectedGameForEdit === registrationOpenGame.slotId
+                  standardRegistrationOpenGame.isBonus
+                    ? "Free bonus registration"
+                    : selectedGameForEdit === standardRegistrationOpenGame.slotId
                     ? "Minimum 8 ETB"
                     : canEditEntryFee(
-                          registrationOpenGame.registeredCartelasCount,
+                          standardRegistrationOpenGame.registeredCartelasCount,
                         )
                       ? "Click Edit to change"
                       : "Locked after first registration"
@@ -1705,7 +1761,7 @@ export function GameOperations() {
                 label="Prize Pool"
                 value={
                   <span className="text-2xl font-bold text-blue-700">
-                    {formatCurrency(registrationOpenGame.prizeAmount)}
+                    {formatCurrency(standardRegistrationOpenGame.prizeAmount)}
                   </span>
                 }
               />
@@ -1714,23 +1770,91 @@ export function GameOperations() {
                 value={
                   <span className="inline-flex items-center gap-2 text-2xl font-bold text-blue-700">
                     <Users className="h-5 w-5" />
-                    {registrationOpenGame.registeredCartelasCount}
+                    {standardRegistrationOpenGame.registeredCartelasCount}
                   </span>
                 }
                 hint="cartelas"
               />
             </div>
             {entryFeeError &&
-            selectedGameForEdit === registrationOpenGame.slotId ? (
+            selectedGameForEdit === standardRegistrationOpenGame.slotId ? (
               <p className="mt-3 text-sm text-destructive">{entryFeeError}</p>
             ) : null}
           </CardContent>
         </Card>
       )}
 
+      {showScheduledBigGameCard && scheduledBigGame ? (
+        <Card className="border-violet-200 bg-gradient-to-br from-violet-50/80 to-slate-50">
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Trophy className="h-5 w-5 text-violet-600" />
+              <CardTitle className="text-violet-950">Big Game</CardTitle>
+              <Badge className="bg-violet-100 text-violet-800">Scheduled</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {scheduledBigGame.staticCode}
+              {scheduledBigGame.playCode
+                ? ` / ${scheduledBigGame.playCode}`
+                : ""}
+              {scheduledBigGame.name ? ` · ${scheduledBigGame.name}` : ""}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Managed on its own schedule — not part of the normal queue.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <RegistrationStatCard
+                label="Entry Fee"
+                value={
+                  <span className="text-2xl font-bold text-violet-700">
+                    {formatCurrency(scheduledBigGame.entryFee)}
+                  </span>
+                }
+              />
+              <RegistrationStatCard
+                label="Prize Pool"
+                value={
+                  <span className="text-2xl font-bold text-violet-700">
+                    {formatCurrency(
+                      scheduledBigGame.fixedPrizeAmount ??
+                        scheduledBigGame.prizeAmount,
+                    )}
+                  </span>
+                }
+              />
+              <RegistrationStatCard
+                label="Registration opens"
+                value={
+                  <span className="text-base font-semibold text-violet-900">
+                    {formatDateTime(scheduledBigGame.registrationOpensAt)}
+                  </span>
+                }
+              />
+              <RegistrationStatCard
+                label="Play starts"
+                value={
+                  <span className="text-base font-semibold text-violet-900">
+                    {formatDateTime(scheduledBigGame.scheduledStartAt)}
+                  </span>
+                }
+              />
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">
+              <Users className="mr-1 inline h-4 w-4" />
+              {scheduledBigGame.registeredCartelasCount} cartelas registered
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Empty state + queue */}
       <div ref={queueSectionRef} className="scroll-mt-4 space-y-6">
-        {!currentGame && !registrationOpenGame && queue.length === 0 && (
+        {!currentGame &&
+          !standardRegistrationOpenGame &&
+          queue.length === 0 &&
+          !showScheduledBigGameCard && (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <div className="mb-4 rounded-full bg-muted p-3">
@@ -1793,6 +1917,16 @@ export function GameOperations() {
                             <Badge variant="outline" className="text-xs">
                               {game.rawStatus === "READY" ? "Ready" : "New"}
                             </Badge>
+                            {game.isBonus ? (
+                              <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
+                                Bonus
+                              </Badge>
+                            ) : null}
+                            {game.isBigGame ? (
+                              <Badge className="bg-violet-100 text-violet-900 hover:bg-violet-100">
+                                Big Game
+                              </Badge>
+                            ) : null}
                             {game.operationMode === "AUTO" ? (
                               <Badge
                                 variant="outline"
@@ -1851,19 +1985,52 @@ export function GameOperations() {
           setIsCreateGameModalOpen(open);
           if (!open) {
             setCreateGameError(null);
+            setCreateGameCategory("NORMAL");
+            setBonusFixedPrizeAmount("");
+            setBonusMaxCartelasPerPlayer("5");
+            setBigGameEntryFee("");
+            setBigGameFixedPrizeAmount("");
+            setBigGameMaxCartelasPerPlayer("20");
+            setBigGameRegistrationOpensAt("");
+            setBigGamePlayStartAt("");
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent
+          className={cn(
+            "sm:max-w-md",
+            createGameCategory === "BIG_GAME" && "sm:max-w-lg",
+          )}
+        >
           <DialogHeader>
             <DialogTitle>Add Game to Queue</DialogTitle>
             <DialogDescription>
-              Choose an active game rule. The new game is added to the end of
-              the queue.
+              {createGameCategory === "BIG_GAME"
+                ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time."
+                : "Choose a game type and active rule. New bonus games are free, fixed-prize rounds that are removed after they finish."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Game type</Label>
+              <Select
+                value={createGameCategory}
+                onValueChange={(value) =>
+                  setCreateGameCategory(value as GameCategory)
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a game type" />
+                </SelectTrigger>
+                <SelectContent position="popper" className="z-[100]">
+                  <SelectItem value="NORMAL">Normal Game</SelectItem>
+                  <SelectItem value="BONUS">Bonus Game</SelectItem>
+                  <SelectItem value="BIG_GAME">Big Game</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label>Game rule</Label>
               <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
@@ -1885,6 +2052,106 @@ export function GameOperations() {
               ) : null}
             </div>
 
+            {createGameCategory === "BONUS" ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="bonus-fixed-prize">Fixed prize</Label>
+                  <Input
+                    id="bonus-fixed-prize"
+                    inputMode="decimal"
+                    placeholder="5000"
+                    value={bonusFixedPrizeAmount}
+                    onChange={(event) =>
+                      setBonusFixedPrizeAmount(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bonus-max-cartelas">
+                    Max cartelas per player
+                  </Label>
+                  <Input
+                    id="bonus-max-cartelas"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={bonusMaxCartelasPerPlayer}
+                    onChange={(event) =>
+                      setBonusMaxCartelasPerPlayer(event.target.value)
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {createGameCategory === "BIG_GAME" ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="big-game-entry-fee">Entry fee (ETB)</Label>
+                  <Input
+                    id="big-game-entry-fee"
+                    inputMode="decimal"
+                    placeholder="25"
+                    value={bigGameEntryFee}
+                    onChange={(event) =>
+                      setBigGameEntryFee(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="big-game-fixed-prize">Prize pool (ETB)</Label>
+                  <Input
+                    id="big-game-fixed-prize"
+                    inputMode="decimal"
+                    placeholder="10000"
+                    value={bigGameFixedPrizeAmount}
+                    onChange={(event) =>
+                      setBigGameFixedPrizeAmount(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="big-game-max-cartelas">
+                    Max cartelas per player
+                  </Label>
+                  <Input
+                    id="big-game-max-cartelas"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={bigGameMaxCartelasPerPlayer}
+                    onChange={(event) =>
+                      setBigGameMaxCartelasPerPlayer(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="big-game-registration-opens">
+                    Registration opens
+                  </Label>
+                  <Input
+                    id="big-game-registration-opens"
+                    type="datetime-local"
+                    value={bigGameRegistrationOpensAt}
+                    onChange={(event) =>
+                      setBigGameRegistrationOpensAt(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="big-game-play-start">Play starts</Label>
+                  <Input
+                    id="big-game-play-start"
+                    type="datetime-local"
+                    value={bigGamePlayStartAt}
+                    onChange={(event) =>
+                      setBigGamePlayStartAt(event.target.value)
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+
             {createGameError ? (
               <p className="text-sm text-destructive">{createGameError}</p>
             ) : null}
@@ -1904,13 +2171,92 @@ export function GameOperations() {
                   return;
                 }
 
+                if (createGameCategory === "BONUS") {
+                  if (!bonusFixedPrizeAmount.trim()) {
+                    setCreateGameError("Enter the fixed prize for the bonus game.");
+                    return;
+                  }
+
+                  const maxCartelas = Number(bonusMaxCartelasPerPlayer);
+                  if (!Number.isFinite(maxCartelas) || maxCartelas < 1) {
+                    setCreateGameError(
+                      "Enter a valid max cartelas per player value.",
+                    );
+                    return;
+                  }
+                }
+
+                if (createGameCategory === "BIG_GAME") {
+                  if (!bigGameEntryFee.trim()) {
+                    setCreateGameError("Enter the Big Game entry fee.");
+                    return;
+                  }
+
+                  if (!bigGameFixedPrizeAmount.trim()) {
+                    setCreateGameError("Enter the Big Game prize pool.");
+                    return;
+                  }
+
+                  const maxCartelas = Number(bigGameMaxCartelasPerPlayer);
+                  if (!Number.isFinite(maxCartelas) || maxCartelas < 1) {
+                    setCreateGameError(
+                      "Enter a valid max cartelas per player value.",
+                    );
+                    return;
+                  }
+
+                  const registrationOpensAt = datetimeLocalToIso(
+                    bigGameRegistrationOpensAt,
+                  );
+                  const playStartAt = datetimeLocalToIso(bigGamePlayStartAt);
+
+                  if (!registrationOpensAt || !playStartAt) {
+                    setCreateGameError(
+                      "Enter valid registration open and play start times.",
+                    );
+                    return;
+                  }
+
+                  if (
+                    new Date(registrationOpensAt).getTime() >=
+                    new Date(playStartAt).getTime()
+                  ) {
+                    setCreateGameError(
+                      "Registration must open before play starts.",
+                    );
+                    return;
+                  }
+
+                  lastCreateCategoryRef.current = "BIG_GAME";
+                  createGame.mutate({
+                    gameRuleId: selectedRuleId,
+                    category: "BIG_GAME",
+                    entryFee: bigGameEntryFee.trim(),
+                    fixedPrizeAmount: bigGameFixedPrizeAmount.trim(),
+                    maxCartelasPerPlayer: maxCartelas,
+                    registrationOpensAt,
+                    playStartAt,
+                  });
+                  return;
+                }
+
                 const defaults = getCreateFormDefaults(
                   defaultOperationMode,
                   timeConfig,
                 );
 
+                lastCreateCategoryRef.current = createGameCategory;
                 createGame.mutate({
                   gameRuleId: selectedRuleId,
+                  category: createGameCategory,
+                  ...(createGameCategory === "BONUS"
+                    ? {
+                        fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
+                        maxCartelasPerPlayer: Number(
+                          bonusMaxCartelasPerPlayer,
+                        ),
+                      }
+                    : {}),
                   operationMode: defaults.operationMode,
                   ...(defaults.operationMode === "AUTO"
                     ? {

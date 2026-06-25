@@ -32,6 +32,10 @@ function createOperationGame(
     playerStatus: "registrationOpen",
     operationStatus: "registration",
     gameRule: { id: "rule-1", name: "Manual", key: "MANUAL" },
+    category: "NORMAL",
+    isBonus: false,
+    fixedPrizeAmount: null,
+    maxCartelasPerPlayer: null,
     entryFee: "10",
     prizePerCartela: "8",
     prizeAmount: "8",
@@ -168,6 +172,46 @@ describe("game-operation-defaults", () => {
     ).toEqual({
       gameRuleId: "rule-1",
       operationMode: "MANUAL",
+    });
+  });
+
+  it("builds create-game request body for Bonus with fixed prize fields", () => {
+    expect(
+      buildCreateGameRequestBody({
+        gameRuleId: "rule-1",
+        category: "BONUS",
+        fixedPrizeAmount: "5000",
+        maxCartelasPerPlayer: 5,
+        operationMode: "MANUAL",
+      }),
+    ).toEqual({
+      gameRuleId: "rule-1",
+      category: "BONUS",
+      fixedPrizeAmount: "5000",
+      maxCartelasPerPlayer: 5,
+      operationMode: "MANUAL",
+    });
+  });
+
+  it("builds create-game request body for Big Game schedule fields", () => {
+    expect(
+      buildCreateGameRequestBody({
+        gameRuleId: "rule-1",
+        category: "BIG_GAME",
+        entryFee: "25",
+        fixedPrizeAmount: "10000",
+        maxCartelasPerPlayer: 20,
+        registrationOpensAt: "2026-07-01T09:00:00.000Z",
+        playStartAt: "2026-07-01T12:00:00.000Z",
+      }),
+    ).toEqual({
+      gameRuleId: "rule-1",
+      category: "BIG_GAME",
+      entryFee: "25",
+      fixedPrizeAmount: "10000",
+      maxCartelasPerPlayer: 20,
+      registrationOpensAt: "2026-07-01T09:00:00.000Z",
+      playStartAt: "2026-07-01T12:00:00.000Z",
     });
   });
 
