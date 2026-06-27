@@ -18,6 +18,9 @@ import {
   readStoredDefaultOperationMode,
   shouldPromptApplyModeToCurrentGame,
   writeStoredDefaultOperationMode,
+  validateBigGameScheduleOrder,
+  isoToDatetimeLocal,
+  datetimeLocalToIso,
 } from "./game-operation-defaults";
 
 function createOperationGame(
@@ -336,6 +339,17 @@ describe("game-operation-defaults", () => {
     expect(
       getGameOperationStatusHint(
         createOperationGame({
+          rawStatus: "NO_WINNER",
+          playerStatus: "finished",
+        }),
+      ),
+    ).toBe(
+      "No winner · all 75 numbers called · queue restored / next game pending",
+    );
+
+    expect(
+      getGameOperationStatusHint(
+        createOperationGame({
           operationMode: "AUTO",
           scheduledStartAt: "2026-06-10T12:01:00.000Z",
         }),
@@ -374,5 +388,37 @@ describe("game-operation-defaults", () => {
     expect(shouldPromptApplyModeToCurrentGame(currentGame, "MANUAL")).toBe(
       true,
     );
+  });
+});
+
+describe("big game schedule helpers", () => {
+  it("converts ISO datetime to datetime-local input value", () => {
+    expect(isoToDatetimeLocal("2026-06-26T08:00:00.000Z")).toMatch(
+      /^2026-06-26T\d{2}:\d{2}$/,
+    );
+  });
+
+  it("rejects schedule order when registration opens after play start", () => {
+    expect(
+      validateBigGameScheduleOrder(
+        "2026-06-27T22:00:00.000Z",
+        "2026-06-27T08:00:00.000Z",
+      ),
+    ).toBe("Registration must open before play starts.");
+  });
+
+  it("accepts valid schedule order", () => {
+    expect(
+      validateBigGameScheduleOrder(
+        "2026-06-27T08:00:00.000Z",
+        "2026-06-27T22:00:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  it("round-trips datetime-local through ISO conversion", () => {
+    const iso = datetimeLocalToIso("2026-06-27T10:30");
+    expect(iso).not.toBeNull();
+    expect(isoToDatetimeLocal(iso)).toBe("2026-06-27T10:30");
   });
 });

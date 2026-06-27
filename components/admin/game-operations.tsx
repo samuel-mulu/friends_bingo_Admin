@@ -78,6 +78,7 @@ import {
   startSessionAutoCall,
   stopSessionAutoCall,
   updateAdminGameStatus,
+  updateAdminBigGameSchedule,
   updateAdminSlotEntryFee,
   type GameOperationItem,
   type GameOperationsCurrentResponse,
@@ -89,6 +90,8 @@ import { ApiError } from "@/lib/api/client";
 import {
   buildCreateGameRequestBody,
   datetimeLocalToIso,
+  isoToDatetimeLocal,
+  validateBigGameScheduleOrder,
   getApplyOperationModeDescription,
   buildOperationModeSwitchPayload,
   getApplyOperationModePrompt,
@@ -169,6 +172,7 @@ import {
 const FALLBACK_OPERATIONS_INVALIDATE_DEBOUNCE_MS = 2500;
 const FALLBACK_OPERATIONS_POLLING_MS = 5000;
 const timeConfigQueryKey = ["admin", "time-config"] as const;
+const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
 export function GameOperations() {
   const queryClient = useQueryClient();
@@ -213,7 +217,16 @@ export function GameOperations() {
   const [cancelQueuedTarget, setCancelQueuedTarget] = useState<{
     slotId: string;
     label: string;
+    registeredCartelasCount?: number;
   } | null>(null);
+  const [bigGameScheduleEditing, setBigGameScheduleEditing] = useState(false);
+  const [bigGameScheduleRegistrationDraft, setBigGameScheduleRegistrationDraft] =
+    useState("");
+  const [bigGameSchedulePlayStartDraft, setBigGameSchedulePlayStartDraft] =
+    useState("");
+  const [bigGameScheduleError, setBigGameScheduleError] = useState<
+    string | null
+  >(null);
   const [clearQueueOpen, setClearQueueOpen] = useState(false);
   const [approveClaimTarget, setApproveClaimTarget] =
     useState<AdminBingoClaim | null>(null);
@@ -268,7 +281,7 @@ export function GameOperations() {
   });
 
   const { data: scheduledBigGame } = useQuery({
-    queryKey: ["admin", "big-game", "current"],
+    queryKey: bigGameQueryKey,
     queryFn: getCurrentBigGame,
     refetchOnWindowFocus: true,
     staleTime: 2_000,
@@ -742,7 +755,15 @@ export function GameOperations() {
           id?: string | null;
           slotId?: string | null;
           gameSlotId?: string | null;
+          status?: string | null;
         };
+
+        if (data.status === "NO_WINNER") {
+          adminToast.info(
+            "No Winner. All 75 numbers were called. Queue restored / next game pending.",
+          );
+        }
+
         dropTerminalSessionFromOperationsCache(queryClient, {
           sessionId: data.sessionId ?? data.id ?? null,
           slotId: data.slotId ?? data.gameSlotId ?? null,
@@ -933,7 +954,9 @@ export function GameOperations() {
     errorMessage: "Failed to cancel live game.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
-      if (!data.alreadyCancelled) {
+      if (data.alreadyCancelled) {
+        adminToast.success("Live game was already cancelled.");
+      } else {
         adminToast.success("Live game cancelled.");
       }
       scheduleOperationsRefresh(true);
@@ -943,12 +966,43 @@ export function GameOperations() {
   const cancelQueuedSlot = useAdminMutation({
     mutationFn: (slotId: string) =>
       updateAdminGameStatus(slotId, { status: "CANCELLED" }),
-    successMessage: "Queued game cancelled.",
-    errorMessage: "Failed to cancel queued game.",
+    successMessage: "Game cancelled.",
+    errorMessage: "Failed to cancel game.",
     invalidateQueryKeys: [],
     onSuccess: () => {
       setCancelQueuedTarget(null);
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
       scheduleOperationsRefresh(true);
+    },
+  });
+
+  const updateBigGameSchedule = useAdminMutation({
+    mutationFn: ({
+      slotId,
+      registrationOpensAt,
+      playStartAt,
+    }: {
+      slotId: string;
+      registrationOpensAt: string;
+      playStartAt: string;
+    }) =>
+      updateAdminBigGameSchedule(slotId, {
+        registrationOpensAt,
+        playStartAt,
+      }),
+    successMessage: "Big Game schedule updated.",
+    errorMessage: "Could not update the Big Game schedule.",
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      setBigGameScheduleEditing(false);
+      setBigGameScheduleError(null);
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      scheduleOperationsRefresh(true);
+    },
+    onError: (error) => {
+      setBigGameScheduleError(
+        getApiErrorMessage(error, "Could not update the Big Game schedule."),
+      );
     },
   });
 
@@ -1113,6 +1167,7 @@ export function GameOperations() {
         delete next[gameId];
         return next;
       });
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
       scheduleOperationsRefresh(true);
     },
     onError: (error, _variables, context) => {
@@ -1231,6 +1286,48 @@ export function GameOperations() {
     }));
   };
 
+  const startBigGameScheduleEdit = () => {
+    if (!scheduledBigGame) {
+      return;
+    }
+
+    setBigGameScheduleError(null);
+    setBigGameScheduleEditing(true);
+    setBigGameScheduleRegistrationDraft(
+      isoToDatetimeLocal(scheduledBigGame.registrationOpensAt),
+    );
+    setBigGameSchedulePlayStartDraft(
+      isoToDatetimeLocal(scheduledBigGame.scheduledStartAt),
+    );
+  };
+
+  const saveBigGameSchedule = (slotId: string) => {
+    const registrationOpensAt = datetimeLocalToIso(
+      bigGameScheduleRegistrationDraft,
+    );
+    const playStartAt = datetimeLocalToIso(bigGameSchedulePlayStartDraft);
+
+    if (!registrationOpensAt || !playStartAt) {
+      setBigGameScheduleError("Both schedule times are required.");
+      return;
+    }
+
+    const orderError = validateBigGameScheduleOrder(
+      registrationOpensAt,
+      playStartAt,
+    );
+    if (orderError) {
+      setBigGameScheduleError(orderError);
+      return;
+    }
+
+    updateBigGameSchedule.mutate({
+      slotId,
+      registrationOpensAt,
+      playStartAt,
+    });
+  };
+
   if (isLoading && !operations) {
     return <GameOperationsSkeleton />;
   }
@@ -1320,6 +1417,11 @@ export function GameOperations() {
               <div className="flex flex-wrap items-center gap-2">
                 <Radio className="h-5 w-5 animate-pulse text-green-600" />
                 <CardTitle className="text-green-900">Current Game</CardTitle>
+                {isBigGameOperationItem(currentGame) ? (
+                  <Badge className="bg-violet-100 text-violet-800">
+                    Big Game
+                  </Badge>
+                ) : null}
                 <Badge className="bg-green-100 text-green-800">
                   {currentGame.playerStatus === "winnerWindow"
                     ? "WINNER WINDOW"
@@ -1787,30 +1889,112 @@ export function GameOperations() {
       {showScheduledBigGameCard && scheduledBigGame ? (
         <Card className="border-violet-200 bg-gradient-to-br from-violet-50/80 to-slate-50">
           <CardHeader className="pb-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <Trophy className="h-5 w-5 text-violet-600" />
-              <CardTitle className="text-violet-950">Big Game</CardTitle>
-              <Badge className="bg-violet-100 text-violet-800">Scheduled</Badge>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Trophy className="h-5 w-5 text-violet-600" />
+                  <CardTitle className="text-violet-950">Big Game</CardTitle>
+                  <Badge className="bg-violet-100 text-violet-800">
+                    {scheduledBigGame.status === "READY"
+                      ? "Scheduled"
+                      : scheduledBigGame.status}
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {scheduledBigGame.staticCode}
+                  {scheduledBigGame.playCode
+                    ? ` / ${scheduledBigGame.playCode}`
+                    : ""}
+                  {scheduledBigGame.name ? ` · ${scheduledBigGame.name}` : ""}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Managed on its own schedule — not part of the normal queue.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {scheduledBigGame.status === "READY" &&
+                !bigGameScheduleEditing ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={startBigGameScheduleEdit}
+                  >
+                    Edit schedule
+                  </Button>
+                ) : null}
+                <LoadingButton
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setCancelQueuedTarget({
+                      slotId: scheduledBigGame.gameSlotId,
+                      label: scheduledBigGame.staticCode,
+                      registeredCartelasCount:
+                        scheduledBigGame.registeredCartelasCount,
+                    })
+                  }
+                  isLoading={isMutationPendingFor(
+                    cancelQueuedSlot,
+                    scheduledBigGame.gameSlotId,
+                  )}
+                  loadingLabel="Cancelling..."
+                  disabled={scheduledBigGame.status === "WINNER_WINDOW"}
+                  className="border-red-200 bg-white text-red-600 hover:bg-red-50"
+                >
+                  <Ban className="mr-2 h-4 w-4" />
+                  Cancel
+                </LoadingButton>
+              </div>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {scheduledBigGame.staticCode}
-              {scheduledBigGame.playCode
-                ? ` / ${scheduledBigGame.playCode}`
-                : ""}
-              {scheduledBigGame.name ? ` · ${scheduledBigGame.name}` : ""}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Managed on its own schedule — not part of the normal queue.
-            </p>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
               <RegistrationStatCard
                 label="Entry Fee"
                 value={
-                  <span className="text-2xl font-bold text-violet-700">
-                    {formatCurrency(scheduledBigGame.entryFee)}
-                  </span>
+                  <EntryFeeEditor
+                    slotId={scheduledBigGame.gameSlotId}
+                    currentFee={scheduledBigGame.entryFee}
+                    canEdit={canEditEntryFee(
+                      scheduledBigGame.registeredCartelasCount,
+                    )}
+                    isEditing={
+                      selectedGameForEdit === scheduledBigGame.gameSlotId
+                    }
+                    draftValue={
+                      entryFeeDrafts[scheduledBigGame.gameSlotId] ??
+                      scheduledBigGame.entryFee
+                    }
+                    isSaving={updateEntryFee.isPending}
+                    registeredCartelasCount={
+                      scheduledBigGame.registeredCartelasCount
+                    }
+                    onStartEdit={startEntryFeeEdit}
+                    onDraftChange={(value) =>
+                      setEntryFeeDrafts((current) => ({
+                        ...current,
+                        [scheduledBigGame.gameSlotId]: value,
+                      }))
+                    }
+                    onSave={saveEntryFee}
+                    onCancel={() => {
+                      setSelectedGameForEdit(null);
+                      setEntryFeeError(null);
+                      setEntryFeeDrafts((current) => {
+                        const next = { ...current };
+                        delete next[scheduledBigGame.gameSlotId];
+                        return next;
+                      });
+                    }}
+                    valueClassName="text-violet-700"
+                  />
+                }
+                hint={
+                  selectedGameForEdit === scheduledBigGame.gameSlotId
+                    ? "Minimum 8 ETB"
+                    : canEditEntryFee(scheduledBigGame.registeredCartelasCount)
+                      ? "Click Edit to change"
+                      : "Locked after first registration"
                 }
               />
               <RegistrationStatCard
@@ -1827,20 +2011,77 @@ export function GameOperations() {
               <RegistrationStatCard
                 label="Registration opens"
                 value={
-                  <span className="text-base font-semibold text-violet-900">
-                    {formatDateTime(scheduledBigGame.registrationOpensAt)}
-                  </span>
+                  bigGameScheduleEditing ? (
+                    <Input
+                      type="datetime-local"
+                      value={bigGameScheduleRegistrationDraft}
+                      onChange={(event) =>
+                        setBigGameScheduleRegistrationDraft(event.target.value)
+                      }
+                      className="text-sm"
+                    />
+                  ) : (
+                    <span className="text-base font-semibold text-violet-900">
+                      {formatDateTime(scheduledBigGame.registrationOpensAt)}
+                    </span>
+                  )
                 }
               />
               <RegistrationStatCard
                 label="Play starts"
                 value={
-                  <span className="text-base font-semibold text-violet-900">
-                    {formatDateTime(scheduledBigGame.scheduledStartAt)}
-                  </span>
+                  bigGameScheduleEditing ? (
+                    <Input
+                      type="datetime-local"
+                      value={bigGameSchedulePlayStartDraft}
+                      onChange={(event) =>
+                        setBigGameSchedulePlayStartDraft(event.target.value)
+                      }
+                      className="text-sm"
+                    />
+                  ) : (
+                    <span className="text-base font-semibold text-violet-900">
+                      {formatDateTime(scheduledBigGame.scheduledStartAt)}
+                    </span>
+                  )
                 }
               />
             </div>
+            {bigGameScheduleEditing ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <LoadingButton
+                  size="sm"
+                  onClick={() =>
+                    saveBigGameSchedule(scheduledBigGame.gameSlotId)
+                  }
+                  isLoading={updateBigGameSchedule.isPending}
+                  loadingLabel="Saving..."
+                  className="bg-violet-700 hover:bg-violet-800"
+                >
+                  Save schedule
+                </LoadingButton>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setBigGameScheduleEditing(false);
+                    setBigGameScheduleError(null);
+                  }}
+                  disabled={updateBigGameSchedule.isPending}
+                >
+                  Cancel edit
+                </Button>
+              </div>
+            ) : null}
+            {bigGameScheduleError ? (
+              <p className="mt-3 text-sm text-destructive">
+                {bigGameScheduleError}
+              </p>
+            ) : null}
+            {entryFeeError &&
+            selectedGameForEdit === scheduledBigGame.gameSlotId ? (
+              <p className="mt-3 text-sm text-destructive">{entryFeeError}</p>
+            ) : null}
             <p className="mt-3 text-sm text-muted-foreground">
               <Users className="mr-1 inline h-4 w-4" />
               {scheduledBigGame.registeredCartelasCount} cartelas registered
@@ -2517,8 +2758,10 @@ export function GameOperations() {
         title="Cancel queued game"
         description={
           cancelQueuedTarget
-            ? `Cancel ${cancelQueuedTarget.label} and remove it from the queue.`
-            : "Cancel this queued game."
+            ? cancelQueuedTarget.registeredCartelasCount
+              ? `Cancel ${cancelQueuedTarget.label}. ${cancelQueuedTarget.registeredCartelasCount} registered cartela(s) will be refunded automatically.`
+              : `Cancel ${cancelQueuedTarget.label} and remove it from the queue.`
+            : "Cancel this game."
         }
         confirmLabel="Cancel game"
         confirmVariant="destructive"
@@ -2869,6 +3112,7 @@ function EntryFeeEditor({
   onDraftChange,
   onSave,
   onCancel,
+  valueClassName = "text-blue-700",
 }: {
   slotId: string;
   currentFee: string;
@@ -2885,11 +3129,12 @@ function EntryFeeEditor({
   onDraftChange: (value: string) => void;
   onSave: (slotId: string, registeredCartelasCount: number) => void;
   onCancel: () => void;
+  valueClassName?: string;
 }) {
   if (!isEditing) {
     return (
       <div className="flex flex-col items-center gap-2">
-        <span className="text-2xl font-bold text-blue-700">
+        <span className={cn("text-2xl font-bold", valueClassName)}>
           {formatCurrency(currentFee)}
         </span>
         {canEdit ? (

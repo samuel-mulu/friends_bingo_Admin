@@ -13,9 +13,18 @@ import type { AdminSession, LoginPayload } from "@/lib/api/types";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.trim() ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  "http://localhost:3002";
+  process.env.API_BASE_URL?.trim() ||
+  process.env.INTERNAL_API_URL?.trim() ||
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
 
 export async function loginAction(payload: LoginPayload) {
+  if (!API_BASE_URL) {
+    return {
+      success: false,
+      error: "Backend API URL is not configured.",
+    };
+  }
+
   try {
     const session = await serverFetch<AdminSession>("/auth/login", {
       method: "POST",
@@ -43,6 +52,11 @@ export async function loginAction(payload: LoginPayload) {
 }
 
 export async function logoutAction() {
+  if (!API_BASE_URL) {
+    await clearSessionCookies();
+    redirect("/login");
+  }
+
   const refreshToken = await getRefreshToken();
 
   // Optional: Call backend logout to revoke refresh token
@@ -63,6 +77,10 @@ export async function logoutAction() {
 }
 
 export async function refreshTokenAction() {
+  if (!API_BASE_URL) {
+    return { success: false, error: "Backend API URL is not configured." };
+  }
+
   const refreshToken = await getRefreshToken();
 
   if (!refreshToken) {

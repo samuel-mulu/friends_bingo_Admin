@@ -78,6 +78,34 @@ export function datetimeLocalToIso(value: string): string | null {
   return parsed.toISOString();
 }
 
+export function isoToDatetimeLocal(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+export function validateBigGameScheduleOrder(
+  registrationOpensAt: string,
+  playStartAt: string,
+): string | null {
+  if (
+    new Date(registrationOpensAt).getTime() >= new Date(playStartAt).getTime()
+  ) {
+    return "Registration must open before play starts.";
+  }
+
+  return null;
+}
+
 export function buildCreateGameRequestBody(payload: CreateGamePayload) {
   const body: CreateGamePayload = {
     gameRuleId: payload.gameRuleId,
@@ -196,6 +224,10 @@ export function getGameOperationStatusHint(
   context: GameOperationStatusHintContext = {},
   timing?: TimingConfigLike,
 ): string {
+  if (game.rawStatus === "NO_WINNER") {
+    return "No winner · all 75 numbers called · queue restored / next game pending";
+  }
+
   if (game.operationMode === "MANUAL") {
     if (game.playerStatus === "checking") {
       return "Checking claim";

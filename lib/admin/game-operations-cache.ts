@@ -33,6 +33,8 @@ type OperationSocketPatch = {
   autoCallEnabled?: boolean;
   autoCallIntervalMs?: number | null;
   nextAutoCallAt?: string | null;
+  noWinnerGraceEndsAt?: string | null;
+  noWinnerReason?: string | null;
   updatedReason?: string;
   gameSlotId?: string;
 };
@@ -217,6 +219,12 @@ function patchGameItem(
   }
   if (patch.nextAutoCallAt !== undefined) {
     next.nextAutoCallAt = patch.nextAutoCallAt;
+  }
+  if (patch.noWinnerGraceEndsAt !== undefined) {
+    next.noWinnerGraceEndsAt = patch.noWinnerGraceEndsAt;
+  }
+  if (patch.noWinnerReason !== undefined) {
+    next.noWinnerReason = patch.noWinnerReason;
   }
   if (patch.status !== undefined) {
     next.rawStatus = patch.status;
@@ -409,7 +417,7 @@ export function optimisticallyClearWaitingQueue(
   });
 }
 
-const TERMINAL_GAME_STATUSES = new Set(["FINISHED", "CANCELLED"]);
+const TERMINAL_GAME_STATUSES = new Set(["FINISHED", "NO_WINNER", "CANCELLED"]);
 
 export function isTerminalGameStatus(
   status: string | null | undefined,

@@ -167,9 +167,12 @@ export interface AdminWithdrawal {
 
 export type GameStatus =
   | "NEXT"
+  | "READY"
   | "CHECKING"
   | "PLAYING"
+  | "WINNER_WINDOW"
   | "FINISHED"
+  | "NO_WINNER"
   | "CANCELLED";
 
 export type GameCategory = "NORMAL" | "BONUS" | "BIG_GAME";
@@ -207,6 +210,8 @@ export interface AdminGame {
   startedAt: string | null;
   finishedAt: string | null;
   winnerCartelaId: string | null;
+  noWinnerGraceEndsAt?: string | null;
+  noWinnerReason?: string | null;
   registeredCartelasCount: number;
   calledNumbersCount: number;
   registrationOpen: boolean;
@@ -223,6 +228,8 @@ export interface AdminGame {
     startedAt: string | null;
     finishedAt: string | null;
     winnerCartelaId: string | null;
+    noWinnerGraceEndsAt?: string | null;
+    noWinnerReason?: string | null;
     registeredCartelasCount: number;
     calledNumbersCount: number;
   } | null;

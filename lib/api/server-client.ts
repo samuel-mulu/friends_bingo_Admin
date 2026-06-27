@@ -5,7 +5,9 @@ import { getAccessToken, getRefreshToken, updateAccessToken, clearSessionCookies
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.trim() ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  "http://localhost:3002";
+  process.env.API_BASE_URL?.trim() ||
+  process.env.INTERNAL_API_URL?.trim() ||
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
 
 interface FetchOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -89,6 +91,10 @@ export async function serverFetch<T>(
   }
 
   const url = `${API_BASE_URL}${endpoint}`;
+
+  if (!API_BASE_URL) {
+    throw new Error("Backend API URL is not configured.");
+  }
 
   const response = await fetch(url, {
     method,

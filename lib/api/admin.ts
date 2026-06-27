@@ -100,6 +100,12 @@ export interface GameOperationItem {
   canRegister: boolean;
   canCallNumber: boolean;
   winnerWindowEndsAt?: string | null;
+  noWinnerGraceEndsAt?: string | null;
+  noWinnerReason?: string | null;
+  sessionOutcomeSummary?: {
+    winnerCartelaNumbers: number[];
+    blockedCartelaNumbers: number[];
+  };
   winnerPayoutsSummary?: Array<{
     cartelaId: string;
     cartelaNumber: number;
@@ -122,6 +128,7 @@ export interface GameOperationsCurrentResponse {
   registrationOpenGame: GameOperationItem | null;
   queue: GameOperationItem[];
   timestamp: string;
+  serverNow?: string;
 }
 
 export function getCurrentGameOperations() {
@@ -133,6 +140,7 @@ export function getCurrentGameOperations() {
 
 export interface CurrentBigGameResponse {
   sessionId: string;
+  gameSlotId: string;
   staticCode: string;
   playCode: string | null;
   name: string;
@@ -262,6 +270,22 @@ export function updateAdminSlotEntryFee(gameId: string, entryFee: string) {
     url: `/admin/slots/${gameId}/entry-fee`,
     method: "PATCH",
     data: { entryFee },
+  });
+}
+
+export interface UpdateBigGameSchedulePayload {
+  registrationOpensAt?: string;
+  playStartAt?: string;
+}
+
+export function updateAdminBigGameSchedule(
+  slotId: string,
+  payload: UpdateBigGameSchedulePayload,
+) {
+  return apiRequest<AdminGame>({
+    url: `/admin/slots/${slotId}/big-game-schedule`,
+    method: "PATCH",
+    data: payload,
   });
 }
 
