@@ -218,6 +218,30 @@ describe("game-operation-defaults", () => {
     });
   });
 
+  it("builds create-game request body for Big GOTD fixed-prize paid entry fields", () => {
+    expect(
+      buildCreateGameRequestBody({
+        gameRuleId: "rule-1",
+        category: "BIG_GOTD",
+        entryFee: "25",
+        fixedPrizeAmount: "5000",
+        maxCartelasPerPlayer: 5,
+        operationMode: "AUTO",
+        registrationDurationSeconds: 60,
+        autoCallIntervalSeconds: 7,
+      }),
+    ).toEqual({
+      gameRuleId: "rule-1",
+      category: "BIG_GOTD",
+      entryFee: "25",
+      fixedPrizeAmount: "5000",
+      maxCartelasPerPlayer: 5,
+      operationMode: "AUTO",
+      registrationDurationSeconds: 60,
+      autoCallIntervalSeconds: 7,
+    });
+  });
+
   it("prefers live game over registration for focused mode switch", () => {
     const registrationOpenGame = createOperationGame({
       slotId: "slot-registration",

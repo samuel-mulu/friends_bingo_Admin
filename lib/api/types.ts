@@ -141,12 +141,7 @@ export interface AdminDeposit {
 }
 
 export type WithdrawalStatus =
-  | "PENDING"
-  | "APPROVED"
-  | "PAID"
-  | "REJECTED"
-  | "FAILED"
-  | "REFUNDED";
+  "PENDING" | "APPROVED" | "PAID" | "REJECTED" | "FAILED" | "REFUNDED";
 
 export interface AdminWithdrawal {
   id: string;
@@ -175,7 +170,7 @@ export type GameStatus =
   | "NO_WINNER"
   | "CANCELLED";
 
-export type GameCategory = "NORMAL" | "BONUS" | "BIG_GAME";
+export type GameCategory = "NORMAL" | "BONUS" | "BIG_GOTD" | "BIG_GAME";
 
 export interface GameRuleSummary {
   id: string;

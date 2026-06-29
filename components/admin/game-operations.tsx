@@ -190,6 +190,7 @@ export function GameOperations() {
   const [bonusFixedPrizeAmount, setBonusFixedPrizeAmount] = useState("");
   const [bonusMaxCartelasPerPlayer, setBonusMaxCartelasPerPlayer] =
     useState("5");
+  const [bigGotdEntryFee, setBigGotdEntryFee] = useState("");
   const [bigGameEntryFee, setBigGameEntryFee] = useState("");
   const [bigGameFixedPrizeAmount, setBigGameFixedPrizeAmount] = useState("");
   const [bigGameMaxCartelasPerPlayer, setBigGameMaxCartelasPerPlayer] =
@@ -220,8 +221,10 @@ export function GameOperations() {
     registeredCartelasCount?: number;
   } | null>(null);
   const [bigGameScheduleEditing, setBigGameScheduleEditing] = useState(false);
-  const [bigGameScheduleRegistrationDraft, setBigGameScheduleRegistrationDraft] =
-    useState("");
+  const [
+    bigGameScheduleRegistrationDraft,
+    setBigGameScheduleRegistrationDraft,
+  ] = useState("");
   const [bigGameSchedulePlayStartDraft, setBigGameSchedulePlayStartDraft] =
     useState("");
   const [bigGameScheduleError, setBigGameScheduleError] = useState<
@@ -650,7 +653,11 @@ export function GameOperations() {
         block: "start",
       });
     });
-  }, [operations?.timestamp, queue.length, standardRegistrationOpenGame?.slotId]);
+  }, [
+    operations?.timestamp,
+    queue.length,
+    standardRegistrationOpenGame?.slotId,
+  ]);
 
   // Fetch pending bingo claims for the checking game
   const { data: bingoClaims } = useQuery({
@@ -1756,7 +1763,8 @@ export function GameOperations() {
                   <Ban className="mr-2 h-4 w-4" />
                   Cancel
                 </LoadingButton>
-                {standardRegistrationOpenGame.operationMode === "AUTO" ? null : (
+                {standardRegistrationOpenGame.operationMode ===
+                "AUTO" ? null : (
                   // Manual Start is hidden for AUTO. Backend still allows
                   // POST /admin/slots/:id/start as an emergency override.
                   <LoadingButton
@@ -1803,7 +1811,11 @@ export function GameOperations() {
           <CardContent>
             <div className="grid gap-3 md:grid-cols-3">
               <RegistrationStatCard
-                label={standardRegistrationOpenGame.isBonus ? "Bonus Entry" : "Entry Fee"}
+                label={
+                  standardRegistrationOpenGame.isBonus
+                    ? "Bonus Entry"
+                    : "Entry Fee"
+                }
                 value={
                   standardRegistrationOpenGame.isBonus ? (
                     <span className="text-2xl font-bold text-emerald-700">
@@ -1817,7 +1829,8 @@ export function GameOperations() {
                         standardRegistrationOpenGame.registeredCartelasCount,
                       )}
                       isEditing={
-                        selectedGameForEdit === standardRegistrationOpenGame.slotId
+                        selectedGameForEdit ===
+                        standardRegistrationOpenGame.slotId
                       }
                       draftValue={
                         entryFeeDrafts[standardRegistrationOpenGame.slotId] ??
@@ -1850,13 +1863,14 @@ export function GameOperations() {
                 hint={
                   standardRegistrationOpenGame.isBonus
                     ? "Free bonus registration"
-                    : selectedGameForEdit === standardRegistrationOpenGame.slotId
-                    ? "Minimum 8 ETB"
-                    : canEditEntryFee(
-                          standardRegistrationOpenGame.registeredCartelasCount,
-                        )
-                      ? "Click Edit to change"
-                      : "Locked after first registration"
+                    : selectedGameForEdit ===
+                        standardRegistrationOpenGame.slotId
+                      ? "Minimum 8 ETB"
+                      : canEditEntryFee(
+                            standardRegistrationOpenGame.registeredCartelasCount,
+                          )
+                        ? "Click Edit to change"
+                        : "Locked after first registration"
                 }
               />
               <RegistrationStatCard
@@ -2096,22 +2110,22 @@ export function GameOperations() {
           !standardRegistrationOpenGame &&
           queue.length === 0 &&
           !showScheduledBigGameCard && (
-          <Card className="border-dashed">
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <div className="mb-4 rounded-full bg-muted p-3">
-                <Plus className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <p className="text-lg font-medium">No games in queue</p>
-              <p className="mb-4 text-sm text-muted-foreground">
-                Create a new game to get started
-              </p>
-              <Button onClick={openCreateGameModal} variant="outline">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Game to Queue
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="mb-4 rounded-full bg-muted p-3">
+                  <Plus className="h-6 w-6 text-muted-foreground" />
+                </div>
+                <p className="text-lg font-medium">No games in queue</p>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Create a new game to get started
+                </p>
+                <Button onClick={openCreateGameModal} variant="outline">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Game to Queue
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
         {/* C. QUEUE */}
         {queue.length > 0 && (
@@ -2161,6 +2175,11 @@ export function GameOperations() {
                             {game.isBonus ? (
                               <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
                                 Bonus
+                              </Badge>
+                            ) : null}
+                            {game.category === "BIG_GOTD" ? (
+                              <Badge className="bg-yellow-100 text-yellow-900 hover:bg-yellow-100">
+                                Big GOTD
                               </Badge>
                             ) : null}
                             {game.isBigGame ? (
@@ -2229,6 +2248,7 @@ export function GameOperations() {
             setCreateGameCategory("NORMAL");
             setBonusFixedPrizeAmount("");
             setBonusMaxCartelasPerPlayer("5");
+            setBigGotdEntryFee("");
             setBigGameEntryFee("");
             setBigGameFixedPrizeAmount("");
             setBigGameMaxCartelasPerPlayer("20");
@@ -2248,7 +2268,9 @@ export function GameOperations() {
             <DialogDescription>
               {createGameCategory === "BIG_GAME"
                 ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time."
-                : "Choose a game type and active rule. New bonus games are free, fixed-prize rounds that are removed after they finish."}
+                : createGameCategory === "BIG_GOTD"
+                  ? "Create a paid fixed-prize Big GOTD round. It stays in the standard queue, uses a fixed prize, and limits cartelas per player like Bonus."
+                  : "Choose a game type and active rule. New bonus games are free, fixed-prize rounds that are removed after they finish."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2267,6 +2289,7 @@ export function GameOperations() {
                 <SelectContent position="popper" className="z-[100]">
                   <SelectItem value="NORMAL">Normal Game</SelectItem>
                   <SelectItem value="BONUS">Bonus Game</SelectItem>
+                  <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
                   <SelectItem value="BIG_GAME">Big Game</SelectItem>
                 </SelectContent>
               </Select>
@@ -2293,8 +2316,23 @@ export function GameOperations() {
               ) : null}
             </div>
 
-            {createGameCategory === "BONUS" ? (
+            {createGameCategory === "BONUS" ||
+            createGameCategory === "BIG_GOTD" ? (
               <div className="grid gap-4 sm:grid-cols-2">
+                {createGameCategory === "BIG_GOTD" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="big-gotd-entry-fee">Entry fee (ETB)</Label>
+                    <Input
+                      id="big-gotd-entry-fee"
+                      inputMode="decimal"
+                      placeholder="25"
+                      value={bigGotdEntryFee}
+                      onChange={(event) =>
+                        setBigGotdEntryFee(event.target.value)
+                      }
+                    />
+                  </div>
+                ) : null}
                 <div className="space-y-2">
                   <Label htmlFor="bonus-fixed-prize">Fixed prize</Label>
                   <Input
@@ -2334,9 +2372,7 @@ export function GameOperations() {
                     inputMode="decimal"
                     placeholder="25"
                     value={bigGameEntryFee}
-                    onChange={(event) =>
-                      setBigGameEntryFee(event.target.value)
-                    }
+                    onChange={(event) => setBigGameEntryFee(event.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -2414,7 +2450,29 @@ export function GameOperations() {
 
                 if (createGameCategory === "BONUS") {
                   if (!bonusFixedPrizeAmount.trim()) {
-                    setCreateGameError("Enter the fixed prize for the bonus game.");
+                    setCreateGameError(
+                      "Enter the fixed prize for the bonus game.",
+                    );
+                    return;
+                  }
+
+                  const maxCartelas = Number(bonusMaxCartelasPerPlayer);
+                  if (!Number.isFinite(maxCartelas) || maxCartelas < 1) {
+                    setCreateGameError(
+                      "Enter a valid max cartelas per player value.",
+                    );
+                    return;
+                  }
+                }
+
+                if (createGameCategory === "BIG_GOTD") {
+                  if (!bigGotdEntryFee.trim()) {
+                    setCreateGameError("Enter the Big GOTD entry fee.");
+                    return;
+                  }
+
+                  if (!bonusFixedPrizeAmount.trim()) {
+                    setCreateGameError("Enter the fixed prize for Big GOTD.");
                     return;
                   }
 
@@ -2490,12 +2548,14 @@ export function GameOperations() {
                 createGame.mutate({
                   gameRuleId: selectedRuleId,
                   category: createGameCategory,
-                  ...(createGameCategory === "BONUS"
+                  ...(createGameCategory === "BONUS" ||
+                  createGameCategory === "BIG_GOTD"
                     ? {
+                        ...(createGameCategory === "BIG_GOTD"
+                          ? { entryFee: bigGotdEntryFee.trim() }
+                          : {}),
                         fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
-                        maxCartelasPerPlayer: Number(
-                          bonusMaxCartelasPerPlayer,
-                        ),
+                        maxCartelasPerPlayer: Number(bonusMaxCartelasPerPlayer),
                       }
                     : {}),
                   operationMode: defaults.operationMode,

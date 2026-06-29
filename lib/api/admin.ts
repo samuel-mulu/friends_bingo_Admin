@@ -72,15 +72,15 @@ export interface GameOperationItem {
   playCode: string | null;
   rawStatus: string;
   playerStatus:
-    | 'registrationOpen'
-    | 'playing'
-    | 'winnerWindow'
-    | 'checking'
-    | 'finished'
-    | 'cancelled';
-  operationStatus: 'live' | 'checking' | 'registration' | 'queue';
+    | "registrationOpen"
+    | "playing"
+    | "winnerWindow"
+    | "checking"
+    | "finished"
+    | "cancelled";
+  operationStatus: "live" | "checking" | "registration" | "queue";
   gameRule: { id: string; name: string; key: string } | null;
-  category: "NORMAL" | "BONUS" | "BIG_GAME";
+  category: "NORMAL" | "BONUS" | "BIG_GOTD" | "BIG_GAME";
   isBonus: boolean;
   isBigGame?: boolean;
   fixedPrizeAmount?: string | null;
@@ -357,14 +357,22 @@ export function cancelBlockingSession(sessionId: string) {
 }
 
 export function startSessionAutoCall(sessionId: string) {
-  return apiRequest<{ success: true; sessionId: string; autoCallEnabled: true }>({
+  return apiRequest<{
+    success: true;
+    sessionId: string;
+    autoCallEnabled: true;
+  }>({
     url: `/admin/sessions/${sessionId}/auto-call/start`,
     method: "POST",
   });
 }
 
 export function stopSessionAutoCall(sessionId: string) {
-  return apiRequest<{ success: true; sessionId: string; autoCallEnabled: false }>({
+  return apiRequest<{
+    success: true;
+    sessionId: string;
+    autoCallEnabled: false;
+  }>({
     url: `/admin/sessions/${sessionId}/auto-call/stop`,
     method: "POST",
   });
