@@ -1,6 +1,7 @@
 import { apiPaginatedRequest, apiRequest } from "@/lib/api/client";
 import type {
   AdminBingoClaim,
+  AdminBroadcast,
   AdminExpense,
   AdminGame,
   AdminDeposit,
@@ -9,6 +10,7 @@ import type {
   AdminUserListItem,
   AdminWithdrawal,
   CreateExpensePayload,
+  CreateAdminBroadcastPayload,
   CalledNumbersResponse,
   CallNumberPayload,
   CreateGamePayload,
@@ -433,5 +435,27 @@ export function updateAdminTimeConfig(payload: UpdateGameTimingConfigPayload) {
     url: "/admin/time-config",
     method: "PATCH",
     data: payload,
+  });
+}
+
+export function getAdminBroadcasts() {
+  return apiRequest<AdminBroadcast[]>({
+    url: "/admin/broadcasts",
+    method: "GET",
+  });
+}
+
+export function createAdminBroadcast(payload: CreateAdminBroadcastPayload) {
+  return apiRequest<AdminBroadcast>({
+    url: "/admin/broadcasts",
+    method: "POST",
+    data: payload,
+  });
+}
+
+export function deleteAdminBroadcast(id: string) {
+  return apiRequest<{ success: boolean }>({
+    url: `/admin/broadcasts/${id}`,
+    method: "DELETE",
   });
 }

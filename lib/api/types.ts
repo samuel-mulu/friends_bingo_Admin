@@ -286,6 +286,23 @@ export interface AdminExpense {
   updatedAt: string;
 }
 
+export type AdminBroadcastCategory = "DISMISSIBLE" | "PERSISTENT" | "FORCED";
+
+export interface AdminBroadcast {
+  id: string;
+  title: string;
+  body: string;
+  category: AdminBroadcastCategory;
+  createdAt: string;
+  createdById?: string | null;
+}
+
+export interface CreateAdminBroadcastPayload {
+  title: string;
+  body: string;
+  category: AdminBroadcastCategory;
+}
+
 export interface CreateExpensePayload {
   amount: string;
   reason: string;
