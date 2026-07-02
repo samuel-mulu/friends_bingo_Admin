@@ -187,7 +187,13 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
           <MetricCard
             title="Game Entry Today"
             value={formatCurrency(overview.gameEntryTodayTotal)}
-            description="Wallet debits for entries"
+            description="Real-money wallet debits for entries"
+            icon={Activity}
+          />
+          <MetricCard
+            title="Bonus Cartelas Used Today"
+            value={overview.bonusCartelasUsedToday.toLocaleString()}
+            description="Registrations paid with bonus cartelas"
             icon={Activity}
           />
           <MetricCard

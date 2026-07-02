@@ -20,6 +20,9 @@ import type {
   LoginPayload,
   GameTimingConfig,
   OverviewReport,
+  PlayerSupportMessage,
+  PlayerSupportStatus,
+  ReplySupportMessagePayload,
   ReportDateRangeParams,
   UpdateGameStatusPayload,
   UpdateGameTimingConfigPayload,
@@ -457,5 +460,39 @@ export function deleteAdminBroadcast(id: string) {
   return apiRequest<{ success: boolean }>({
     url: `/admin/broadcasts/${id}`,
     method: "DELETE",
+  });
+}
+
+export function getAdminSupportMessages(
+  page: number,
+  pageSize: number,
+  status?: PlayerSupportStatus,
+) {
+  return apiPaginatedRequest<PlayerSupportMessage>({
+    url: "/admin/support/messages",
+    method: "GET",
+    params: {
+      page,
+      pageSize,
+      ...(status ? { status } : {}),
+    },
+  });
+}
+
+export function getAdminSupportMessage(id: string) {
+  return apiRequest<PlayerSupportMessage>({
+    url: `/admin/support/messages/${id}`,
+    method: "GET",
+  });
+}
+
+export function replyToSupportMessage(
+  id: string,
+  payload: ReplySupportMessagePayload,
+) {
+  return apiRequest<PlayerSupportMessage>({
+    url: `/admin/support/messages/${id}`,
+    method: "PATCH",
+    data: payload,
   });
 }

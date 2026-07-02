@@ -72,6 +72,7 @@ export interface OverviewReport {
   gameEntryTodayTotal: string;
   prizePaidTodayTotal: string;
   netToday: string;
+  bonusCartelasUsedToday: number;
 }
 
 export interface AdminUserListItem {
@@ -89,6 +90,7 @@ export interface WalletSummary {
   userId: string;
   balance: string;
   lockedBalance: string;
+  bonusCartelaBalance: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -330,6 +332,9 @@ export interface FinancialReport {
   netRevenue: string;
   registeredCartelasCount: number;
   companyFeeTotal: string;
+  bonusEntryValueTotal: string;
+  bonusCompanyFeeTotal: string;
+  bonusCartelasUsed: number;
   expensesTotal: string;
   profitNet: string;
   transactionCount: number;
@@ -354,6 +359,8 @@ export interface GamesReport {
   gamesFinished: number;
   totalRegistrations: number;
   totalEntryFees: string;
+  bonusEntryValueTotal: string;
+  bonusCartelasUsed: number;
   totalPrizeAmount: string;
   averagePlayersPerGame: number;
   winners: GamesReportWinner[];
@@ -431,4 +438,37 @@ export interface AdminBingoClaim {
       number: number;
     };
   };
+}
+
+export type PlayerSupportCategory =
+  | "FEEDBACK"
+  | "COMPLAINT"
+  | "ADVICE"
+  | "OTHER";
+
+export type PlayerSupportStatus = "OPEN" | "REPLIED" | "CLOSED";
+
+export interface PlayerSupportUserSummary {
+  id: string;
+  fullName: string;
+  phoneNumber: string;
+}
+
+export interface PlayerSupportMessage {
+  id: string;
+  userId: string;
+  category: PlayerSupportCategory;
+  message: string;
+  status: PlayerSupportStatus;
+  adminReply: string | null;
+  repliedAt: string | null;
+  repliedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: PlayerSupportUserSummary;
+}
+
+export interface ReplySupportMessagePayload {
+  adminReply?: string;
+  status?: PlayerSupportStatus;
 }

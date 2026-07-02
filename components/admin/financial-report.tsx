@@ -207,13 +207,25 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Company Fee Total"
               value={formatCurrency(financialQuery.data.companyFeeTotal)}
-              description={`${financialQuery.data.registeredCartelasCount.toLocaleString()} registered cartelas × session fee (default 2 ETB)`}
+              description="Real-money company fees from paid registrations"
+              icon={<Building2 className="size-5" />}
+            />
+            <ReportMetricCard
+              title="Bonus Entry Value"
+              value={formatCurrency(financialQuery.data.bonusEntryValueTotal)}
+              description={`${financialQuery.data.bonusCartelasUsed.toLocaleString()} bonus cartelas used`}
+              icon={<Coins className="size-5" />}
+            />
+            <ReportMetricCard
+              title="Bonus Company Fee Value"
+              value={formatCurrency(financialQuery.data.bonusCompanyFeeTotal)}
+              description="Company fee value covered by bonus cartelas"
               icon={<Building2 className="size-5" />}
             />
             <ReportMetricCard
               title="Game Entry Total"
               value={formatCurrency(financialQuery.data.gameEntryTotal)}
-              description="Wallet debits for game registrations"
+              description="Real-money wallet debits for game registrations"
               icon={<ReceiptText className="size-5" />}
             />
             <ReportMetricCard

@@ -148,8 +148,14 @@ export function GamesReportView() {
             <ReportMetricCard
               title="Total Entry Fees"
               value={formatCurrency(gamesQuery.data.totalEntryFees)}
-              description="Entry fee value across all registrations"
+              description="Real-money entry fees from paid registrations"
               icon={<Target className="size-5" />}
+            />
+            <ReportMetricCard
+              title="Bonus Entry Value"
+              value={formatCurrency(gamesQuery.data.bonusEntryValueTotal)}
+              description={`${gamesQuery.data.bonusCartelasUsed.toLocaleString()} bonus cartelas used`}
+              icon={<Ticket className="size-5" />}
             />
             <ReportMetricCard
               title="Total Prize Amount"
