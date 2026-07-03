@@ -3,6 +3,7 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import {
   Bar,
   BarChart,
@@ -24,7 +25,7 @@ import {
   WalletCards,
 } from "lucide-react";
 
-import { getOverviewReport } from "@/lib/api/admin";
+import { getCurrentBigGame, getOverviewReport } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api/client";
 import type { OverviewReport } from "@/lib/api/types";
 import { formatCurrency } from "@/lib/formatters";
@@ -39,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
 const overviewQueryKey = ["admin", "reports", "overview"] as const;
+const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
 export function DashboardOverview() {
   const overviewQuery = useQuery({
@@ -76,6 +78,12 @@ export function DashboardOverview() {
 }
 
 function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
+  const bigGameQuery = useQuery({
+    queryKey: bigGameQueryKey,
+    queryFn: getCurrentBigGame,
+    staleTime: 2_000,
+  });
+
   const chartData = useMemo(
     () => [
       {
@@ -104,6 +112,34 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
 
   return (
     <div className="space-y-6">
+      {bigGameQuery.data?.heldWaitingForLiveSlot ? (
+        <Card className="border-violet-200 bg-violet-50/80">
+          <CardHeader className="pb-2">
+            <div className="flex items-start gap-3">
+              <Trophy className="mt-0.5 h-5 w-5 text-violet-600" />
+              <div className="space-y-1">
+                <CardTitle className="text-violet-950">
+                  Big Game waiting to start
+                </CardTitle>
+                <CardDescription>
+                  Close or cancel{" "}
+                  <strong>
+                    {bigGameQuery.data.blockingLiveGame?.staticCode ??
+                      "the current live game"}
+                  </strong>{" "}
+                  to release the slot.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/games">Go to Games</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricCard
           title="Total Players"

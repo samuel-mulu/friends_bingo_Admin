@@ -134,6 +134,10 @@ export interface GameOperationsCurrentResponse {
   queue: GameOperationItem[];
   timestamp: string;
   serverNow?: string;
+  bigGameLiveElsewhere?: {
+    sessionId: string;
+    phase: "live" | "held";
+  };
 }
 
 export function getCurrentGameOperations() {
@@ -157,6 +161,13 @@ export interface CurrentBigGameResponse {
   registeredCartelasCount: number;
   registrationOpensAt: string | null;
   scheduledStartAt: string | null;
+  heldWaitingForLiveSlot?: boolean;
+  blockingLiveGame?: {
+    sessionId: string;
+    staticCode: string;
+    playCode: string | null;
+    playerStatus: string;
+  };
 }
 
 export function getCurrentBigGame() {

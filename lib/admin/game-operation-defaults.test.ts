@@ -134,6 +134,34 @@ describe("game-operation-defaults", () => {
     });
   });
 
+  it("detects when a Big Game is already scheduled for create UI gating", () => {
+    const scheduledBigGame = {
+      sessionId: "big-session-1",
+      gameSlotId: "slot-big-1",
+      staticCode: "BIG-1",
+      playCode: "777",
+      name: "Big Game",
+      status: "READY",
+      category: "BIG_GAME" as const,
+      entryFee: "25",
+      prizeAmount: "10000",
+      fixedPrizeAmount: "10000",
+      registeredCartelasCount: 0,
+      registrationOpensAt: "2026-07-01T09:00:00.000Z",
+      scheduledStartAt: "2026-07-01T12:00:00.000Z",
+      heldWaitingForLiveSlot: true,
+      blockingLiveGame: {
+        sessionId: "session-live",
+        staticCode: "MANUAL-S2",
+        playCode: "123",
+        playerStatus: "playing",
+      },
+    };
+
+    expect(scheduledBigGame.heldWaitingForLiveSlot).toBe(true);
+    expect(scheduledBigGame.blockingLiveGame?.staticCode).toBe("MANUAL-S2");
+  });
+
   it("builds operation mode switch payload from the focused game", () => {
     const currentGame = createOperationGame({
       registrationDurationSeconds: 45,

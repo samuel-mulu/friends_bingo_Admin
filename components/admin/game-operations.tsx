@@ -618,6 +618,8 @@ export function GameOperations() {
 
   const showScheduledBigGameCard =
     scheduledBigGame != null && !isBigGameOperationItem(currentGame);
+  const hasActiveBigGame =
+    scheduledBigGame != null || isBigGameOperationItem(currentGame);
 
   const { data: gameRules = [] } = useQuery({
     queryKey: ["admin", "game-rules"],
@@ -940,6 +942,11 @@ export function GameOperations() {
       scheduleOperationsRefresh(true);
     },
     onError: (error) => {
+      if (error instanceof ApiError && error.statusCode === 409) {
+        setCreateGameError("A Big Game is already scheduled.");
+        return;
+      }
+
       setCreateGameError(
         getApiErrorMessage(error, "Could not add the game to the queue."),
       );
@@ -1909,9 +1916,11 @@ export function GameOperations() {
                   <Trophy className="h-5 w-5 text-violet-600" />
                   <CardTitle className="text-violet-950">Big Game</CardTitle>
                   <Badge className="bg-violet-100 text-violet-800">
-                    {scheduledBigGame.status === "READY"
-                      ? "Scheduled"
-                      : scheduledBigGame.status}
+                    {scheduledBigGame.heldWaitingForLiveSlot
+                      ? "Held"
+                      : scheduledBigGame.status === "READY"
+                        ? "Scheduled"
+                        : scheduledBigGame.status}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -1921,6 +1930,16 @@ export function GameOperations() {
                     : ""}
                   {scheduledBigGame.name ? ` · ${scheduledBigGame.name}` : ""}
                 </p>
+                {scheduledBigGame.heldWaitingForLiveSlot &&
+                scheduledBigGame.blockingLiveGame ? (
+                  <p className="text-sm text-amber-800">
+                    Blocked by live game{" "}
+                    <strong>
+                      {scheduledBigGame.blockingLiveGame.staticCode}
+                    </strong>
+                    . Close or cancel it to start the Big Game.
+                  </p>
+                ) : null}
                 <p className="text-sm text-muted-foreground">
                   Managed on its own schedule — not part of the normal queue.
                 </p>
@@ -2290,9 +2309,17 @@ export function GameOperations() {
                   <SelectItem value="NORMAL">Normal Game</SelectItem>
                   <SelectItem value="BONUS">Bonus Game</SelectItem>
                   <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
-                  <SelectItem value="BIG_GAME">Big Game</SelectItem>
+                  <SelectItem value="BIG_GAME" disabled={hasActiveBigGame}>
+                    Big Game
+                    {hasActiveBigGame ? " (already scheduled)" : ""}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {hasActiveBigGame ? (
+                <p className="text-sm text-muted-foreground">
+                  A Big Game is already scheduled.
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
