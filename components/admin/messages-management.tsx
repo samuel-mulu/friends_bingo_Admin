@@ -16,7 +16,6 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -122,11 +121,6 @@ export function MessagesManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Messages"
-        description="Send dismissible inbox messages, always-visible notices, or a forced maintenance modal that blocks the player app until you delete it."
-      />
-
       <Card>
         <CardHeader>
           <CardTitle>New broadcast</CardTitle>

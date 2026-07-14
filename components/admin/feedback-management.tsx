@@ -21,7 +21,6 @@ import {
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
 import { LoadingButton } from "@/components/admin/loading-button";
-import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -163,11 +162,6 @@ export function FeedbackManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Feedback"
-        description="Read player feedback, complaints, and advice. Reply once in-app so the player can see your response."
-      />
-
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

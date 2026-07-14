@@ -7,6 +7,7 @@ import type {
   AdminDeposit,
   AdminSession,
   AdminUserDetail,
+  AdminUserFinancialHistory,
   AdminUserListItem,
   AdminWithdrawal,
   CreateExpensePayload,
@@ -208,6 +209,13 @@ export function getAdminWithdrawals(page = 1, pageSize = 20) {
   });
 }
 
+export function getPendingWithdrawalCount() {
+  return apiRequest<{ count: number }>({
+    url: "/admin/withdrawals/pending-count",
+    method: "GET",
+  });
+}
+
 export function approveWithdrawal(
   withdrawalId: string,
   payoutTransactionUrl: string,
@@ -250,6 +258,13 @@ export function getAdminUsers(
 export function getAdminUserById(userId: string) {
   return apiRequest<AdminUserDetail>({
     url: `/admin/users/${userId}`,
+    method: "GET",
+  });
+}
+
+export function getAdminUserFinancialHistory(userId: string) {
+  return apiRequest<AdminUserFinancialHistory>({
+    url: `/admin/users/${userId}/financial-history`,
     method: "GET",
   });
 }
@@ -328,13 +343,20 @@ export interface StartAdminGamePayload {
   companyFeePerCartela?: string;
 }
 
+export interface TransitionCommandResponse {
+  success: true;
+  transition: string;
+  sessionId: string | null;
+  skipped: boolean;
+  operations: GameOperationsCurrentResponse;
+}
+
 export function startAdminGame(
   gameId: string,
   payload?: StartAdminGamePayload,
 ) {
-  // New architecture: start a session from a slot
-  return apiRequest<AdminGame>({
-    url: `/admin/slots/${gameId}/start`,
+  return apiRequest<TransitionCommandResponse>({
+    url: `/admin/sessions/${gameId}/start`,
     method: "POST",
     data: payload,
   });
@@ -362,12 +384,22 @@ export function clearAdminQueue() {
 }
 
 export function cancelBlockingSession(sessionId: string) {
-  return apiRequest<{
-    success: true;
-    sessionId: string;
-    alreadyCancelled?: boolean;
-  }>({
+  return apiRequest<TransitionCommandResponse>({
     url: `/admin/sessions/${sessionId}/cancel`,
+    method: "PATCH",
+  });
+}
+
+export function finishWinnerWindow(sessionId: string) {
+  return apiRequest<TransitionCommandResponse>({
+    url: `/admin/sessions/${sessionId}/finalize-winner-window`,
+    method: "PATCH",
+  });
+}
+
+export function openNextRegistrationAfterTerminal(sessionId: string) {
+  return apiRequest<TransitionCommandResponse>({
+    url: `/admin/sessions/${sessionId}/open-next-ready`,
     method: "PATCH",
   });
 }

@@ -12,15 +12,36 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Gamepad2, Loader2, Target, Ticket, Trophy, Users } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Gamepad2,
+  Loader2,
+  Target,
+  Ticket,
+  Trophy,
+  Users,
+} from "lucide-react";
 
 import { getGamesReport } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import { formatCurrency, formatDateTime } from "@/lib/formatters";
+import { adminToast } from "@/lib/admin/admin-toast";
+import { exportGamesReportPdf } from "@/lib/admin/export-games-report-pdf";
 import {
-  AdminEmptyState,
-} from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
+  deriveFinancialRange,
+  formatDayLabel,
+  formatMonthLabel,
+  getCurrentMonthKey,
+  getTodayDateKey,
+  isDayAtOrAfterToday,
+  isMonthAtOrAfterCurrent,
+  shiftDayKey,
+  shiftMonthKey,
+  type FinancialPeriodMode,
+} from "@/lib/admin/financial-period";
+import { formatCurrency, formatDateTime } from "@/lib/formatters";
+import { AdminEmptyState } from "@/components/admin/admin-table-state";
 import { ReportDateRangeFilter } from "@/components/admin/report-date-range-filter";
 import { ReportMetricCard } from "@/components/admin/report-metric-card";
 import { Button } from "@/components/ui/button";
@@ -45,8 +66,26 @@ const gamesReportQueryKey = (from: string, to: string) =>
   ["admin", "reports", "games", from, to] as const;
 
 export function GamesReportView() {
-  const [from, setFrom] = useState(getDateDaysAgo(29));
-  const [to, setTo] = useState(getTodayDate());
+  const [mode, setMode] = useState<FinancialPeriodMode>("daily");
+  const [dayKey, setDayKey] = useState(getTodayDateKey);
+  const [monthKey, setMonthKey] = useState(getCurrentMonthKey);
+  const [rangeFrom, setRangeFrom] = useState(() =>
+    shiftDayKey(getTodayDateKey(), -29),
+  );
+  const [rangeTo, setRangeTo] = useState(getTodayDateKey);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const { from, to } = useMemo(
+    () =>
+      deriveFinancialRange({
+        mode,
+        dayKey,
+        monthKey,
+        rangeFrom,
+        rangeTo,
+      }),
+    [mode, dayKey, monthKey, rangeFrom, rangeTo],
+  );
 
   const gamesQuery = useQuery({
     queryKey: gamesReportQueryKey(from, to),
@@ -55,6 +94,7 @@ export function GamesReportView() {
         from: from || undefined,
         to: to || undefined,
       }),
+    placeholderData: (previous) => previous,
   });
 
   const activityChartData = useMemo(
@@ -89,23 +129,180 @@ export function GamesReportView() {
     [gamesQuery.data],
   );
 
+  const canGoNext =
+    mode === "daily"
+      ? !isDayAtOrAfterToday(dayKey)
+      : mode === "monthly"
+        ? !isMonthAtOrAfterCurrent(monthKey)
+        : false;
+
+  const periodLabel =
+    mode === "daily"
+      ? formatDayLabel(dayKey)
+      : mode === "monthly"
+        ? formatMonthLabel(monthKey)
+        : `${rangeFrom || "…"} → ${rangeTo || "…"}`;
+
+  const modeLabel =
+    mode === "daily" ? "Daily" : mode === "monthly" ? "Monthly" : "Custom range";
+
+  const exportPdf = async () => {
+    if (!gamesQuery.data) {
+      adminToast.error("Load the game report before exporting.");
+      return;
+    }
+
+    setIsExportingPdf(true);
+    try {
+      exportGamesReportPdf({
+        report: gamesQuery.data,
+        periodLabel,
+        modeLabel,
+        from,
+        to,
+      });
+      adminToast.success("Game report PDF downloaded.");
+    } catch (error) {
+      adminToast.error(
+        getApiErrorMessage(error, "Could not generate the PDF report."),
+      );
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Game Reports"
-        description="Review game creation, completions, registration volume, prize totals, and winner outcomes across a selected reporting window."
-      />
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ["daily", "Daily"],
+            ["monthly", "Monthly"],
+            ["range", "Range"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            type="button"
+            size="sm"
+            variant={mode === value ? "default" : "outline"}
+            onClick={() => setMode(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
 
-      <ReportDateRangeFilter
-        from={from}
-        to={to}
-        onFromChange={setFrom}
-        onToChange={setTo}
-        onReset={() => {
-          setFrom(getDateDaysAgo(29));
-          setTo(getTodayDate());
-        }}
-      />
+      {mode === "range" ? (
+        <ReportDateRangeFilter
+          from={rangeFrom}
+          to={rangeTo}
+          onFromChange={setRangeFrom}
+          onToChange={setRangeTo}
+          onReset={() => {
+            setRangeFrom(shiftDayKey(getTodayDateKey(), -29));
+            setRangeTo(getTodayDateKey());
+          }}
+        />
+      ) : (
+        <div className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Previous period"
+              onClick={() => {
+                if (mode === "daily") {
+                  setDayKey((current) => shiftDayKey(current, -1));
+                } else {
+                  setMonthKey((current) => shiftMonthKey(current, -1));
+                }
+              }}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+            <div className="min-w-[12rem] text-center">
+              <p className="text-sm font-semibold text-foreground">
+                {periodLabel}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {mode === "daily" ? "Single day" : "Calendar month"}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Next period"
+              disabled={!canGoNext}
+              onClick={() => {
+                if (mode === "daily") {
+                  setDayKey((current) => {
+                    const next = shiftDayKey(current, 1);
+                    return next <= getTodayDateKey() ? next : current;
+                  });
+                } else {
+                  setMonthKey((current) => {
+                    const next = shiftMonthKey(current, 1);
+                    return next <= getCurrentMonthKey() ? next : current;
+                  });
+                }
+              }}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (mode === "daily") {
+                  setDayKey(getTodayDateKey());
+                } else {
+                  setMonthKey(getCurrentMonthKey());
+                }
+              }}
+            >
+              {mode === "daily" ? "Today" : "This month"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!gamesQuery.data || isExportingPdf}
+              onClick={() => void exportPdf()}
+            >
+              {isExportingPdf ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {isExportingPdf ? "Preparing PDF…" : "Export PDF"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {mode === "range" ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!gamesQuery.data || isExportingPdf}
+            onClick={() => void exportPdf()}
+          >
+            {isExportingPdf ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            {isExportingPdf ? "Preparing PDF…" : "Export PDF"}
+          </Button>
+        </div>
+      ) : null}
 
       {gamesQuery.isLoading ? (
         <GamesReportLoading />
@@ -126,11 +323,32 @@ export function GamesReportView() {
         </Card>
       ) : !gamesQuery.data ? null : (
         <div className="space-y-6">
+          <Card className="border-primary/20 bg-[linear-gradient(135deg,rgba(13,92,99,0.08)_0%,rgba(31,122,140,0.04)_100%)]">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+                  <Users className="size-5" />
+                </div>
+                <div>
+                  <CardTitle>Average players per game</CardTitle>
+                  <CardDescription>
+                    Registration density for games created in this period
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-semibold text-primary">
+                {gamesQuery.data.averagePlayersPerGame.toFixed(2)}
+              </p>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <ReportMetricCard
               title="Games Created"
               value={gamesQuery.data.gamesCreated.toLocaleString()}
-              description="Games set up during the selected range"
+              description="Games set up during the selected period"
               icon={<Gamepad2 className="size-5" />}
             />
             <ReportMetricCard
@@ -162,13 +380,6 @@ export function GamesReportView() {
               value={formatCurrency(gamesQuery.data.totalPrizeAmount)}
               description="Prize value configured for created games"
               icon={<Trophy className="size-5" />}
-            />
-            <ReportMetricCard
-              title="Average Players Per Game"
-              value={gamesQuery.data.averagePlayersPerGame.toFixed(2)}
-              description="Registration average based on created games"
-              icon={<Users className="size-5" />}
-              emphasize
             />
           </div>
 
@@ -202,8 +413,8 @@ export function GamesReportView() {
               <CardHeader>
                 <CardTitle>Money setup overview</CardTitle>
                 <CardDescription>
-                  Entry fee volume compared with the total configured prize value
-                  in the selected range.
+                  Entry fee volume compared with the total configured prize
+                  value in the selected period.
                 </CardDescription>
               </CardHeader>
               <CardContent className="h-[280px]">
@@ -237,7 +448,7 @@ export function GamesReportView() {
             <CardContent className="px-0 pt-0">
               {gamesQuery.data.winners.length === 0 ? (
                 <AdminEmptyState
-                  title="No winners in this range"
+                  title="No winners in this period"
                   description="Finished games with winners will appear here once the selected period includes completed results."
                 />
               ) : (
@@ -282,7 +493,9 @@ export function GamesReportView() {
                         <TableCell className="text-right font-medium">
                           {formatCurrency(winner.prizeAmount)}
                         </TableCell>
-                        <TableCell>{formatDateTime(winner.finishedAt)}</TableCell>
+                        <TableCell>
+                          {formatDateTime(winner.finishedAt)}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -299,6 +512,15 @@ export function GamesReportView() {
 function GamesReportLoading() {
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-4 w-72" />
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-10 w-24" />
+        </CardContent>
+      </Card>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 6 }).map((_, index) => (
           <Card key={index}>
@@ -327,27 +549,6 @@ function GamesReportLoading() {
           </Card>
         ))}
       </div>
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-4 w-72" />
-        </CardHeader>
-        <CardContent>
-          <div className="flex h-48 items-center justify-center">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
-}
-
-function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function getDateDaysAgo(daysAgo: number) {
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
-  return date.toISOString().slice(0, 10);
 }

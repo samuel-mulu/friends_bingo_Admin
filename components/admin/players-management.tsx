@@ -6,7 +6,11 @@ import { Eye, Wallet } from "lucide-react";
 
 import { getAdminUserById, getAdminUsers } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import { formatCurrency, formatDateTime } from "@/lib/formatters";
+import {
+  coerceMoneyAmount,
+  formatCurrency,
+  formatDateTime,
+} from "@/lib/formatters";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
 import { AdminTableSkeleton } from "@/components/admin/admin-table-skeleton";
@@ -14,7 +18,6 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +30,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -70,21 +72,43 @@ export function PlayersManagement() {
     enabled: Boolean(selectedUserId),
   });
 
+  const selectedListUser = usersQuery.data?.items.find(
+    (user) => user.id === selectedUserId,
+  );
+
+  const availableBalance = (() => {
+    const fromDetail =
+      userDetailQuery.data?.wallet?.balance != null
+        ? coerceMoneyAmount(userDetailQuery.data.wallet.balance)
+        : null;
+    const fromList =
+      selectedListUser?.walletBalance != null
+        ? coerceMoneyAmount(selectedListUser.walletBalance)
+        : null;
+
+    // Prefer detail, but keep table balance if detail wrongly resolves to 0.
+    if (fromDetail != null && fromList != null) {
+      if (fromDetail === "0" && fromList !== "0") {
+        return fromList;
+      }
+      return fromDetail;
+    }
+
+    return fromDetail ?? fromList ?? "0";
+  })();
+  const lockedBalance = coerceMoneyAmount(
+    userDetailQuery.data?.wallet?.lockedBalance,
+  );
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Players"
-        description="Browse player accounts, review wallet balances, and open a focused profile drawer before taking any operational action."
-      />
-
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
               <CardTitle>Player directory</CardTitle>
               <CardDescription>
-                Admin-safe user listing with current status, role, wallet
-                balance, and a drill-down view for operational support.
+                Search by status, role, and wallet balance.
               </CardDescription>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -107,9 +131,6 @@ export function PlayersManagement() {
                 <div className="font-medium text-foreground">
                   {usersQuery.data?.pagination.totalItems.toLocaleString() ?? "0"}{" "}
                   {roleFilter === "ADMIN" ? "admins" : "players"}
-                </div>
-                <div className="text-muted-foreground">
-                  Paginated for quick admin lookup
                 </div>
               </div>
             </div>
@@ -202,10 +223,6 @@ export function PlayersManagement() {
         <SheetContent side="right" className="w-full sm:max-w-xl">
           <SheetHeader className="border-b border-border/60">
             <SheetTitle>Player details</SheetTitle>
-            <SheetDescription>
-              Review the player profile, wallet summary, and basic activity
-              counts without exposing any sensitive credential data.
-            </SheetDescription>
           </SheetHeader>
 
           <div className="space-y-4 overflow-y-auto p-4">
@@ -259,27 +276,25 @@ export function PlayersManagement() {
                       <div className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
                         <Wallet className="size-4" />
                       </div>
-                      <div>
-                        <CardTitle>Wallet summary</CardTitle>
-                        <CardDescription>
-                          Available and locked balances from the backend wallet
-                          source of truth.
-                        </CardDescription>
-                      </div>
+                      <CardTitle>Wallet summary</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
                     <DetailItem
                       label="Available balance"
-                      value={formatCurrency(
-                        userDetailQuery.data.wallet?.balance ?? "0",
-                      )}
+                      value={
+                        <span className="text-base font-semibold">
+                          {formatCurrency(availableBalance)}
+                        </span>
+                      }
                     />
                     <DetailItem
                       label="Locked balance"
-                      value={formatCurrency(
-                        userDetailQuery.data.wallet?.lockedBalance ?? "0",
-                      )}
+                      value={
+                        <span className="text-base font-semibold">
+                          {formatCurrency(lockedBalance)}
+                        </span>
+                      }
                     />
                     <DetailItem
                       label="Wallet ID"
@@ -297,10 +312,6 @@ export function PlayersManagement() {
                 <Card size="sm">
                   <CardHeader>
                     <CardTitle>Activity snapshot</CardTitle>
-                    <CardDescription>
-                      A compact operational view of the player&apos;s financial
-                      and game-related record counts.
-                    </CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 sm:grid-cols-2">
                     <DetailItem

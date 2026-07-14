@@ -16,7 +16,6 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { Button } from "@/components/ui/button";
 import {
@@ -102,19 +101,14 @@ export function DepositsManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Deposits"
-        description="View deposit history, open Telebirr receipts, and manually resolve rare pending deposits when Verify.ET verification did not finish."
-      />
-
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
               <CardTitle>Deposit history</CardTitle>
               <CardDescription>
-                Deposits are verified automatically through Verify.ET. Manual
-                approve or reject is only for exceptional pending disputes.
+                Most deposits verify automatically. Approve or reject only when
+                a pending deposit still needs review.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">

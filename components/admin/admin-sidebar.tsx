@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { useEffect } from "react";
+import { Menu, PanelLeftClose } from "lucide-react";
 
 import { adminNavigation, adminSecondaryNavigation } from "@/lib/navigation";
+import { usePendingWithdrawalsCount } from "@/lib/admin/use-pending-withdrawals-count";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,39 +13,82 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
 
-export function AdminSidebar({ pathname }: { pathname: string }) {
-  return (
-    <aside className="hidden w-72 shrink-0 overflow-y-auto border-r border-border/60 bg-white/80 px-4 py-5 backdrop-blur lg:flex lg:flex-col">
-      <SidebarContent pathname={pathname} />
-    </aside>
-  );
-}
+export function AdminSidebarNav({
+  pathname,
+  open,
+  onOpenChange,
+}: {
+  pathname: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  useEffect(() => {
+    onOpenChange(false);
+  }, [pathname, onOpenChange]);
 
-export function AdminMobileNav({ pathname }: { pathname: string }) {
   return (
-    <Sheet>
-      <SheetTrigger asChild>
-        <Button variant="outline" size="icon" className="shrink-0 lg:hidden">
-          <Menu className="size-4" />
-          <span className="sr-only">Open navigation</span>
-        </Button>
-      </SheetTrigger>
-      <SheetContent side="left" className="w-[min(20rem,88vw)] p-0">
-        <SheetHeader className="border-b border-border/60">
-          <SheetTitle>Friends Bingo Admin</SheetTitle>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="left"
+        className="w-[min(18rem,88vw)] p-0 sm:max-w-72"
+        showCloseButton={false}
+      >
+        <SheetHeader className="flex-row items-center justify-between border-b border-border/60 px-4 py-3 text-left">
+          <SheetTitle className="text-base">Friends Bingo Admin</SheetTitle>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Hide navigation"
+            onClick={() => onOpenChange(false)}
+          >
+            <PanelLeftClose className="size-4" />
+          </Button>
         </SheetHeader>
-        <div className="p-4">
-          <SidebarContent pathname={pathname} />
+        <div className="h-[calc(100%-3.5rem)] overflow-y-auto p-4">
+          <SidebarContent
+            pathname={pathname}
+            onNavigate={() => onOpenChange(false)}
+          />
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-function SidebarContent({ pathname }: { pathname: string }) {
+export function AdminSidebarToggle({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      className="shrink-0"
+      aria-label={open ? "Hide navigation" : "Show navigation"}
+      aria-expanded={open}
+      onClick={() => onOpenChange(!open)}
+    >
+      <Menu className="size-4" />
+    </Button>
+  );
+}
+
+function SidebarContent({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const { count: pendingWithdrawals } = usePendingWithdrawalsCount();
+
   return (
     <div className="flex h-full flex-col gap-6">
       <BrandBlock />
@@ -52,11 +97,14 @@ function SidebarContent({ pathname }: { pathname: string }) {
           const isActive =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
+          const badgeCount =
+            item.href === "/withdrawals" ? pendingWithdrawals : 0;
 
           return (
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                 isActive
@@ -64,8 +112,21 @@ function SidebarContent({ pathname }: { pathname: string }) {
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}
             >
-              <Icon className="size-4" />
-              <span>{item.label}</span>
+              <Icon className="size-4 shrink-0" />
+              <span className="flex-1">{item.label}</span>
+              {badgeCount > 0 ? (
+                <span
+                  className={cn(
+                    "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
+                    isActive
+                      ? "bg-white text-red-600"
+                      : "bg-red-600 text-white",
+                  )}
+                  aria-label={`${badgeCount} pending withdrawals`}
+                >
+                  {badgeCount > 99 ? "99+" : badgeCount}
+                </span>
+              ) : null}
             </Link>
           );
         })}
@@ -79,6 +140,7 @@ function SidebarContent({ pathname }: { pathname: string }) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                 isActive

@@ -113,6 +113,81 @@ export interface AdminUserDetail {
   };
 }
 
+export type WalletTransactionType =
+  | "DEPOSIT"
+  | "WITHDRAW_REQUEST"
+  | "WITHDRAW_PAID"
+  | "WITHDRAW_REFUND"
+  | "GAME_ENTRY"
+  | "PRIZE_WIN"
+  | "REFUND"
+  | "ADMIN_ADJUSTMENT";
+
+export interface AdminWalletTransaction {
+  id: string;
+  userId: string;
+  type: WalletTransactionType;
+  amount: string;
+  balanceBefore: string;
+  balanceAfter: string;
+  referenceType: string | null;
+  referenceId: string | null;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface PlayerDepositHistoryItem {
+  id: string;
+  userId: string;
+  provider: PaymentProvider;
+  amount: string;
+  transactionRef: string;
+  receiptUrl: string | null;
+  walletTransactionId: string | null;
+  status: DepositStatus;
+  rejectionReason: string | null;
+  verifiedAmount: string | null;
+  verifiedReceiverName: string | null;
+  createdAt: string;
+  verifiedAt: string | null;
+  updatedAt: string;
+}
+
+export interface PlayerWithdrawalHistoryItem {
+  id: string;
+  userId: string;
+  provider: PaymentProvider;
+  amount: string;
+  receiverPhone: string | null;
+  receiverAccount: string | null;
+  payoutRef: string | null;
+  status: WithdrawalStatus;
+  adminNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+  paidAt: string | null;
+}
+
+export interface AdminUserFinancialHistory {
+  user: AdminUserDetail;
+  wallet: WalletSummary | null;
+  summary: {
+    totalDeposited: string;
+    approvedDepositCount: number;
+    totalWithdrawn: string;
+    paidWithdrawalCount: number;
+    totalPrizeWon: string;
+    prizeWinCount: number;
+    totalGameEntry: string;
+    gameEntryCount: number;
+    pendingWithdrawalTotal: string;
+    pendingWithdrawalCount: number;
+  };
+  deposits: PlayerDepositHistoryItem[];
+  withdrawals: PlayerWithdrawalHistoryItem[];
+  transactions: AdminWalletTransaction[];
+}
+
 export type PaymentProvider = "CBE" | "TELEBIRR" | "AWASH" | "BOA";
 
 export type DepositStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -272,9 +347,16 @@ export interface CallNumberPayload {
   number: number;
 }
 
+export type FinancialSettlementAccountKey =
+  | "all"
+  | "telebirr_1"
+  | "telebirr_2"
+  | "cbe";
+
 export interface ReportDateRangeParams {
   from?: string;
   to?: string;
+  settlementAccount?: FinancialSettlementAccountKey;
 }
 
 export interface AdminExpense {
@@ -340,6 +422,28 @@ export interface FinancialReport {
   transactionCount: number;
   expenses: AdminExpense[];
   dailyTotals: FinancialDailyTotal[];
+  totalWalletsBalance: string;
+  totalWalletsLocked: string;
+  totalWalletsLiability: string;
+  settlementAccount: FinancialSettlementAccountKey;
+  settlementAccounts: FinancialSettlementAccount[];
+  settlementBreakdown: FinancialSettlementBreakdownItem[];
+}
+
+export interface FinancialSettlementAccount {
+  key: Exclude<FinancialSettlementAccountKey, "all">;
+  label: string;
+  account: string;
+  provider: PaymentProvider;
+}
+
+export interface FinancialSettlementBreakdownItem {
+  key: Exclude<FinancialSettlementAccountKey, "all">;
+  label: string;
+  account: string;
+  provider: PaymentProvider;
+  depositsTotal: string;
+  depositCount: number;
 }
 
 export interface GamesReportWinner {

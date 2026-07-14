@@ -7,10 +7,17 @@ const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
 const USER_DATA_KEY = "user_data";
 
-// 30 minutes for access token (matches backend)
+// Short-lived access cookie; refreshed via refresh_token when expired.
 const ACCESS_TOKEN_MAX_AGE = 30 * 60;
 // 30 days for refresh token
 const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60;
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL?.trim() ||
+  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+  process.env.API_BASE_URL?.trim() ||
+  process.env.INTERNAL_API_URL?.trim() ||
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
 
 export async function setSessionCookies(session: AdminSession): Promise<void> {
   const cookieStore = await cookies();
@@ -92,6 +99,59 @@ export async function getSessionFromCookies(): Promise<AdminSession | null> {
   };
 }
 
+async function refreshSessionAccessToken(
+  refreshToken: string,
+): Promise<string | null> {
+  if (!API_BASE_URL) return null;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) {
+      await clearSessionCookies();
+      return null;
+    }
+
+    const data = await response.json();
+    const newAccessToken = data.data?.accessToken as string | undefined;
+
+    if (!newAccessToken) {
+      await clearSessionCookies();
+      return null;
+    }
+
+    await updateAccessToken(newAccessToken);
+
+    if (data.data?.refreshToken) {
+      const cookieStore = await cookies();
+      cookieStore.set(REFRESH_TOKEN_KEY, data.data.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: REFRESH_TOKEN_MAX_AGE,
+        path: "/",
+      });
+    }
+
+    return newAccessToken;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read-only session check for Server Components.
+ * Do not refresh/set cookies here — Next.js only allows cookie writes in
+ * Route Handlers / Server Actions. Use /api/auth/refresh for page reloads.
+ */
+export async function ensureSessionFromCookies(): Promise<AdminSession | null> {
+  return getSessionFromCookies();
+}
+
 export async function updateAccessToken(token: string): Promise<void> {
   const cookieStore = await cookies();
 
@@ -102,4 +162,29 @@ export async function updateAccessToken(token: string): Promise<void> {
     maxAge: ACCESS_TOKEN_MAX_AGE,
     path: "/",
   });
+}
+
+/** Server Action / serverFetch helper: refresh + persist cookies. */
+export async function refreshSessionFromCookies(): Promise<AdminSession | null> {
+  const [refreshToken, user] = await Promise.all([
+    getRefreshToken(),
+    getUserFromCookies(),
+  ]);
+
+  if (!refreshToken || !user) {
+    return null;
+  }
+
+  const newAccessToken = await refreshSessionAccessToken(refreshToken);
+  if (!newAccessToken) {
+    return null;
+  }
+
+  const rotatedRefresh = await getRefreshToken();
+
+  return {
+    accessToken: newAccessToken,
+    refreshToken: rotatedRefresh ?? refreshToken,
+    user,
+  };
 }

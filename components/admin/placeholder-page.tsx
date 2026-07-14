@@ -2,7 +2,6 @@ import { Construction } from "lucide-react";
 
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -27,13 +26,6 @@ export function PlaceholderPage({
             {description}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="rounded-2xl border border-dashed border-border/80 bg-muted/30 p-6 text-sm text-muted-foreground">
-            This page is intentionally scoped as a clean placeholder for the
-            first admin foundation. Data tables, filters, and actions can plug
-            in here next without reworking the layout shell.
-          </div>
-        </CardContent>
       </Card>
     </div>
   );

@@ -21,8 +21,13 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
+import {
+  WithdrawalHistoryButton,
+  WithdrawalPlayerHistorySheet,
+} from "@/components/admin/withdrawal-player-history-sheet";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
+import { pendingWithdrawalsCountQueryKey } from "@/lib/admin/use-pending-withdrawals-count";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -39,6 +44,92 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+function normalizePhoneDigits(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("251") && digits.length >= 12) {
+    return digits.slice(-9);
+  }
+  if (digits.startsWith("0") && digits.length >= 10) {
+    return digits.slice(-9);
+  }
+  if (digits.length === 9) {
+    return digits;
+  }
+  return digits;
+}
+
+function phonesMatch(a: string | null | undefined, b: string | null | undefined) {
+  if (!a?.trim() || !b?.trim()) {
+    return false;
+  }
+  const left = normalizePhoneDigits(a);
+  const right = normalizePhoneDigits(b);
+  if (!left || !right) {
+    return false;
+  }
+  return left === right || left.endsWith(right) || right.endsWith(left);
+}
+
+function WithdrawalReceiverCell({ withdrawal }: { withdrawal: AdminWithdrawal }) {
+  const ownPhone = withdrawal.user.phoneNumber;
+  const isTelebirr = withdrawal.provider === "TELEBIRR";
+  const payoutTarget =
+    (isTelebirr
+      ? withdrawal.receiverPhone?.trim() || withdrawal.receiverAccount?.trim()
+      : withdrawal.receiverAccount?.trim() || withdrawal.receiverPhone?.trim()) ||
+    null;
+
+  // Telebirr with no separate receiver → payout is their account phone.
+  if (isTelebirr && (!payoutTarget || phonesMatch(payoutTarget, ownPhone))) {
+    return (
+      <div className="min-w-[180px] space-y-1">
+        <div className="font-medium">{ownPhone}</div>
+        <Badge
+          variant="outline"
+          className="border-emerald-300 bg-emerald-50 text-emerald-800"
+        >
+          Own number (recommended)
+        </Badge>
+      </div>
+    );
+  }
+
+  if (isTelebirr && payoutTarget) {
+    return (
+      <div className="min-w-[180px] space-y-1">
+        <div className="font-semibold text-red-600">{payoutTarget}</div>
+        <div className="text-xs text-muted-foreground">Other Telebirr number</div>
+        <div className="text-xs text-foreground">
+          Own: <span className="font-medium">{ownPhone}</span>
+        </div>
+        <Badge
+          variant="outline"
+          className="border-emerald-300 bg-emerald-50 text-emerald-800"
+        >
+          Own number recommended
+        </Badge>
+      </div>
+    );
+  }
+
+  // Banks / other providers
+  return (
+    <div className="min-w-[170px] space-y-0.5">
+      <div className="font-medium">{payoutTarget ?? ownPhone}</div>
+      {withdrawal.receiverPhone &&
+      payoutTarget &&
+      withdrawal.receiverPhone !== payoutTarget ? (
+        <div className="text-xs text-muted-foreground">
+          Phone: {withdrawal.receiverPhone}
+        </div>
+      ) : null}
+      {!payoutTarget ? (
+        <div className="text-xs text-muted-foreground">Using account phone</div>
+      ) : null}
+    </div>
+  );
+}
 
 const pageSize = 20;
 const withdrawalsQueryKey = (page: number) =>
@@ -62,6 +153,9 @@ export function WithdrawalsManagement() {
   const [approveUrlError, setApproveUrlError] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<AdminWithdrawal | null>(null);
   const [paidTarget, setPaidTarget] = useState<AdminWithdrawal | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<AdminWithdrawal | null>(
+    null,
+  );
 
   const withdrawalsQuery = useQuery({
     queryKey: withdrawalsQueryKey(page),
@@ -78,7 +172,7 @@ export function WithdrawalsManagement() {
     }) => approveWithdrawal(withdrawalId, payoutTransactionUrl),
     successMessage: "Withdrawal approved and paid out.",
     errorMessage: "The withdrawal could not be approved.",
-    invalidateQueryKeys: [["admin", "withdrawals"]],
+    invalidateQueryKeys: [["admin", "withdrawals"], pendingWithdrawalsCountQueryKey],
     onSuccess: () => {
       setApproveTarget(null);
       setApproveUrlError(null);
@@ -95,7 +189,7 @@ export function WithdrawalsManagement() {
     }) => rejectWithdrawal(withdrawalId, adminNote),
     successMessage: "Withdrawal rejected.",
     errorMessage: "The withdrawal could not be rejected.",
-    invalidateQueryKeys: [["admin", "withdrawals"]],
+    invalidateQueryKeys: [["admin", "withdrawals"], pendingWithdrawalsCountQueryKey],
     onSuccess: () => {
       setRejectTarget(null);
     },
@@ -111,7 +205,7 @@ export function WithdrawalsManagement() {
     }) => markWithdrawalPaid(withdrawalId, payoutRef),
     successMessage: "Withdrawal marked as paid.",
     errorMessage: "The payout could not be marked as paid.",
-    invalidateQueryKeys: [["admin", "withdrawals"]],
+    invalidateQueryKeys: [["admin", "withdrawals"], pendingWithdrawalsCountQueryKey],
     onSuccess: () => {
       setPaidTarget(null);
     },
@@ -131,19 +225,14 @@ export function WithdrawalsManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Withdrawals"
-        description="Review cash-out requests, confirm payouts with a transaction URL, and reject invalid requests with an internal note."
-      />
-
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
               <CardTitle>Withdrawal operations</CardTitle>
               <CardDescription>
-                Approve and pay in one step with a payout transaction URL. Locked
-                funds are released from the player wallet when payout is confirmed.
+                Approve and pay with a payout reference. Player locked funds are
+                released when payout is confirmed.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -152,8 +241,8 @@ export function WithdrawalsManagement() {
               </div>
               {summary.legacyApproved > 0 ? (
                 <div className="text-muted-foreground">
-                  {summary.legacyApproved.toLocaleString()} legacy approved
-                  awaiting mark-paid
+                  {summary.legacyApproved.toLocaleString()} approved, awaiting
+                  mark paid
                 </div>
               ) : null}
             </div>
@@ -210,12 +299,7 @@ export function WithdrawalsManagement() {
                         </TableCell>
                         <TableCell>{withdrawal.provider}</TableCell>
                         <TableCell>
-                          <div className="min-w-[170px]">
-                            <div>{withdrawal.receiverPhone ?? "-"}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {withdrawal.receiverAccount ?? "No account provided"}
-                            </div>
-                          </div>
+                          <WithdrawalReceiverCell withdrawal={withdrawal} />
                         </TableCell>
                         <TableCell>
                           <AdminStatusBadge status={withdrawal.status} />
@@ -241,6 +325,9 @@ export function WithdrawalsManagement() {
                         <TableCell>{formatDateTime(withdrawal.createdAt)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
+                            <WithdrawalHistoryButton
+                              onClick={() => setHistoryTarget(withdrawal)}
+                            />
                             <Button
                               variant="outline"
                               size="sm"
@@ -371,10 +458,10 @@ export function WithdrawalsManagement() {
             setPaidTarget(null);
           }
         }}
-        title="Mark legacy withdrawal paid"
+        title="Mark withdrawal paid"
         description={
           paidTarget
-            ? `Confirm payout for ${formatCurrency(paidTarget.amount)} to ${paidTarget.user.fullName}. This is for legacy approved rows only.`
+            ? `Confirm payout for ${formatCurrency(paidTarget.amount)} to ${paidTarget.user.fullName}.`
             : "Mark this withdrawal as paid."
         }
         confirmLabel="Mark paid"
@@ -393,6 +480,16 @@ export function WithdrawalsManagement() {
           });
         }}
         isPending={markPaidMutation.isPending}
+      />
+
+      <WithdrawalPlayerHistorySheet
+        withdrawal={historyTarget}
+        open={Boolean(historyTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setHistoryTarget(null);
+          }
+        }}
       />
     </div>
   );

@@ -1,22 +1,41 @@
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AdminShell } from "@/components/admin/admin-shell";
-import { getSessionFromCookies } from "@/lib/auth/cookies";
+import {
+  getAccessToken,
+  getRefreshToken,
+  getUserFromCookies,
+} from "@/lib/auth/cookies";
 
 export default async function AdminLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  // Server-side auth check. user_data alone is not enough: it is readable by
-  // the browser and can outlive the httpOnly access token.
-  const session = await getSessionFromCookies();
-  const user = session?.user;
+  const [accessToken, refreshToken, user] = await Promise.all([
+    getAccessToken(),
+    getRefreshToken(),
+    getUserFromCookies(),
+  ]);
 
-  if (!user || user.role !== "ADMIN") {
-    redirect("/login");
+  if (accessToken && user?.role === "ADMIN") {
+    return <AdminShell initialUser={user}>{children}</AdminShell>;
   }
 
-  return <AdminShell initialUser={user}>{children}</AdminShell>;
+  // Access cookie expired: refresh via Route Handler so Set-Cookie sticks.
+  if (refreshToken && user?.role === "ADMIN") {
+    const headerStore = await headers();
+    const pathname = headerStore.get("x-pathname") || "/games";
+    const nextPath =
+      pathname.startsWith("/") &&
+      !pathname.startsWith("/api") &&
+      pathname !== "/login"
+        ? pathname
+        : "/games";
+    redirect(`/api/auth/refresh?next=${encodeURIComponent(nextPath)}`);
+  }
+
+  redirect("/login");
 }

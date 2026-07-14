@@ -42,6 +42,7 @@ import {
   Radio,
   RefreshCw,
   Target,
+  Trash2,
   Trophy,
   Users,
   XCircle,
@@ -65,6 +66,7 @@ import {
   cancelBlockingSession,
   clearAdminQueue,
   createAdminGame,
+  finishWinnerWindow as finishWinnerWindowCommand,
   updateAdminSlotOperationMode,
   getAdminBingoClaims,
   getAdminGameRules,
@@ -125,6 +127,35 @@ function isBigGameOperationItem(
 ): boolean {
   return Boolean(item?.isBigGame || item?.category === "BIG_GAME");
 }
+
+function isBonusOperationItem(
+  item: Pick<GameOperationItem, "category" | "isBonus"> | null | undefined,
+): boolean {
+  return Boolean(item?.isBonus || item?.category === "BONUS");
+}
+
+function isBigGotdOperationItem(
+  item: Pick<GameOperationItem, "category"> | null | undefined,
+): boolean {
+  return item?.category === "BIG_GOTD";
+}
+
+/** Full-card tint for Bonus / Big GOTD (not just the badge). */
+function getCategorySurfaceClassName(
+  item:
+    | Pick<GameOperationItem, "category" | "isBonus">
+    | null
+    | undefined,
+): string | undefined {
+  if (!item) return undefined;
+  if (isBonusOperationItem(item)) {
+    return "border-amber-300 bg-amber-50 text-amber-950";
+  }
+  if (isBigGotdOperationItem(item)) {
+    return "border-yellow-300 bg-yellow-50 text-yellow-950";
+  }
+  return undefined;
+}
 import {
   bingoClaimsQueryKey,
   calledNumbersQueryKey,
@@ -160,7 +191,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { PageHeader } from "@/components/admin/page-header";
 import {
   Select,
   SelectContent,
@@ -215,9 +245,10 @@ export function GameOperations() {
   });
   const [callNumberError, setCallNumberError] = useState<string | null>(null);
   const [cancelLiveOpen, setCancelLiveOpen] = useState(false);
-  const [cancelQueuedTarget, setCancelQueuedTarget] = useState<{
+  const [queuedSlotAction, setQueuedSlotAction] = useState<{
     slotId: string;
     label: string;
+    mode: "clear" | "cancel";
     registeredCartelasCount?: number;
   } | null>(null);
   const [bigGameScheduleEditing, setBigGameScheduleEditing] = useState(false);
@@ -242,6 +273,13 @@ export function GameOperations() {
   const [socketConnected, setSocketConnected] = useState(
     () => socketService.isConnected,
   );
+  const [transitionLocked, setTransitionLocked] = useState(false);
+  const [transitionLockSessionId, setTransitionLockSessionId] = useState<
+    string | null
+  >(null);
+  const [transitionLockTargetStatus, setTransitionLockTargetStatus] = useState<
+    string | null
+  >(null);
   const [calledNumbersRevision, setCalledNumbersRevision] = useState(0);
   const bumpCalledNumbersRevision = useCallback(() => {
     setCalledNumbersRevision((revision) => revision + 1);
@@ -355,6 +393,21 @@ export function GameOperations() {
   const queueSectionRef = useRef<HTMLDivElement | null>(null);
   const scrollToQueueAfterCreateRef = useRef(false);
   const lastCreateCategoryRef = useRef<GameCategory>("NORMAL");
+
+  const lockTransitionUi = useCallback(
+    (sessionId: string, targetStatus: string, _command: string) => {
+      setTransitionLocked(true);
+      setTransitionLockSessionId(sessionId);
+      setTransitionLockTargetStatus(targetStatus);
+    },
+    [],
+  );
+
+  const unlockTransitionUi = useCallback((_reason: string) => {
+    setTransitionLocked(false);
+    setTransitionLockSessionId(null);
+    setTransitionLockTargetStatus(null);
+  }, []);
 
   const scheduleOperationsRefresh = useCallback(
     (immediate = false) => {
@@ -765,7 +818,19 @@ export function GameOperations() {
           slotId?: string | null;
           gameSlotId?: string | null;
           status?: string | null;
+          reason?: string | null;
         };
+        if (
+          transitionLocked &&
+          transitionLockSessionId &&
+          transitionLockTargetStatus &&
+          (data.sessionId ?? data.id ?? null) === transitionLockSessionId &&
+          (data.status === transitionLockTargetStatus ||
+            (transitionLockTargetStatus === "FINISHED" && data.status == null) ||
+            (transitionLockTargetStatus === "CANCELLED" && data.reason != null))
+        ) {
+          unlockTransitionUi("socket_confirmed");
+        }
 
         if (data.status === "NO_WINNER") {
           adminToast.info(
@@ -809,8 +874,28 @@ export function GameOperations() {
     const handleStatusChanged = (payload: unknown) => {
       const status =
         payload && typeof payload === "object"
-          ? (payload as { status?: string | null }).status
+          ? (payload as { status?: string | null }).status ?? null
           : null;
+      const sessionId =
+        payload && typeof payload === "object"
+          ? ((payload as { sessionId?: string | null; id?: string | null })
+              .sessionId ??
+            (payload as { id?: string | null }).id ??
+            null)
+          : null;
+
+      if (transitionLocked) {
+        if (
+          transitionLockSessionId &&
+          transitionLockTargetStatus &&
+          sessionId === transitionLockSessionId &&
+          status === transitionLockTargetStatus
+        ) {
+          unlockTransitionUi("socket_confirmed");
+        } else {
+          // Ignore stale status events that do not match the pending transition.
+        }
+      }
 
       if (isTerminalGameStatus(status)) {
         handleTerminalSession(payload);
@@ -858,6 +943,10 @@ export function GameOperations() {
     bumpCalledNumbersRevision,
     scheduleOperationsRefresh,
     socketConnected,
+    transitionLocked,
+    transitionLockSessionId,
+    transitionLockTargetStatus,
+    unlockTransitionUi,
   ]);
 
   useEffect(() => {
@@ -955,11 +1044,18 @@ export function GameOperations() {
 
   const startGame = useAdminMutation({
     mutationFn: (gameId: string) => startAdminGame(gameId),
-    successMessage: "Game started.",
+    successMessage: undefined,
     errorMessage: "Failed to start game.",
     invalidateQueryKeys: [],
-    onSuccess: () => {
-      scheduleOperationsRefresh(true);
+    onSuccess: (data) => {
+      queryClient.setQueryData(operationsQueryKey, data.operations);
+      const liveStatus = data.operations.liveGame?.playerStatus ?? null;
+      if (liveStatus === "playing") {
+        unlockTransitionUi("command_snapshot");
+      }
+    },
+    onError: () => {
+      unlockTransitionUi("command_failed");
     },
   });
 
@@ -968,23 +1064,51 @@ export function GameOperations() {
     errorMessage: "Failed to cancel live game.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
-      if (data.alreadyCancelled) {
-        adminToast.success("Live game was already cancelled.");
-      } else {
-        adminToast.success("Live game cancelled.");
+      queryClient.setQueryData(operationsQueryKey, data.operations);
+      const currentStatus =
+        data.operations.liveGame?.playerStatus ??
+        data.operations.checkingGame?.playerStatus ??
+        null;
+      if (currentStatus !== "playing" && currentStatus !== "checking") {
+        unlockTransitionUi("command_snapshot");
       }
-      scheduleOperationsRefresh(true);
+    },
+    onError: () => {
+      unlockTransitionUi("command_failed");
     },
   });
 
-  const cancelQueuedSlot = useAdminMutation({
+  const finishWinnerWindow = useAdminMutation({
+    mutationFn: (sessionId: string) => finishWinnerWindowCommand(sessionId),
+    successMessage: undefined,
+    errorMessage: "Failed to finish winner window.",
+    invalidateQueryKeys: [],
+    onSuccess: (data) => {
+      queryClient.setQueryData(operationsQueryKey, data.operations);
+      const liveStatus = data.operations.liveGame?.playerStatus ?? null;
+      if (liveStatus !== "winnerWindow") {
+        unlockTransitionUi("command_snapshot");
+      }
+    },
+    onError: () => {
+      unlockTransitionUi("command_failed");
+    },
+  });
+
+  const removeQueuedSlot = useAdminMutation({
     mutationFn: (slotId: string) =>
       updateAdminGameStatus(slotId, { status: "CANCELLED" }),
-    successMessage: "Game cancelled.",
-    errorMessage: "Failed to cancel game.",
+    successMessage:
+      queuedSlotAction?.mode === "clear"
+        ? "Game removed from queue."
+        : "Game cancelled.",
+    errorMessage:
+      queuedSlotAction?.mode === "clear"
+        ? "Failed to remove game from queue."
+        : "Failed to cancel game.",
     invalidateQueryKeys: [],
     onSuccess: () => {
-      setCancelQueuedTarget(null);
+      setQueuedSlotAction(null);
       void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
       scheduleOperationsRefresh(true);
     },
@@ -1382,12 +1506,6 @@ export function GameOperations() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
-        <PageHeader
-          title="Game Operations"
-          description="Manage live games, registrations, and queue"
-          className="hidden sm:block"
-        />
-
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
           <OperationModeHeaderControl
             value={headerOperationMode}
@@ -1425,15 +1543,47 @@ export function GameOperations() {
 
       {/* A. CURRENT GAME — live, winner window, or checking */}
       {currentGame && (
-        <Card className="border-green-200 bg-green-50/50">
+        <Card
+          className={cn(
+            "border-green-200 bg-green-50/50",
+            isBonusOperationItem(currentGame) &&
+              "border-amber-300 bg-amber-50/80",
+            isBigGotdOperationItem(currentGame) &&
+              "border-yellow-300 bg-yellow-50/80",
+          )}
+        >
           <CardHeader className="pb-2">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                <Radio className="h-5 w-5 animate-pulse text-green-600" />
-                <CardTitle className="text-green-900">Current Game</CardTitle>
+                <Radio
+                  className={cn(
+                    "h-5 w-5 animate-pulse text-green-600",
+                    isBonusOperationItem(currentGame) && "text-amber-700",
+                    isBigGotdOperationItem(currentGame) && "text-yellow-700",
+                  )}
+                />
+                <CardTitle
+                  className={cn(
+                    "text-green-900",
+                    isBonusOperationItem(currentGame) && "text-amber-950",
+                    isBigGotdOperationItem(currentGame) && "text-yellow-950",
+                  )}
+                >
+                  Current Game
+                </CardTitle>
                 {isBigGameOperationItem(currentGame) ? (
                   <Badge className="bg-violet-100 text-violet-800">
                     Big Game
+                  </Badge>
+                ) : null}
+                {isBonusOperationItem(currentGame) ? (
+                  <Badge className="bg-amber-200 text-amber-950 hover:bg-amber-200">
+                    Bonus
+                  </Badge>
+                ) : null}
+                {isBigGotdOperationItem(currentGame) ? (
+                  <Badge className="bg-yellow-200 text-yellow-950 hover:bg-yellow-200">
+                    Big GOTD
                   </Badge>
                 ) : null}
                 <Badge className="bg-green-100 text-green-800">
@@ -1451,7 +1601,7 @@ export function GameOperations() {
                   onClick={() => setCancelLiveOpen(true)}
                   isLoading={cancelLiveSession.isPending}
                   loadingLabel="Cancelling..."
-                  disabled={!currentGame.sessionId}
+                  disabled={!currentGame.sessionId || transitionLocked}
                   className="border-red-200 text-red-600 hover:bg-red-50"
                 >
                   <Ban className="mr-2 h-4 w-4" />
@@ -1494,22 +1644,6 @@ export function GameOperations() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              {socketConnected ? (
-                <Badge
-                  variant="outline"
-                  className="border-emerald-300 bg-emerald-50 text-emerald-700"
-                >
-                  Realtime connected
-                </Badge>
-              ) : (
-                <Badge
-                  variant="outline"
-                  className="border-amber-300 bg-amber-50 text-amber-800"
-                >
-                  Polling every {Math.round(operationsFallbackPollingMs / 1000)}
-                  s
-                </Badge>
-              )}
               {isAutoCalling ? (
                 <Badge
                   variant="outline"
@@ -1607,18 +1741,40 @@ export function GameOperations() {
                       </p>
                     )}
                   </div>
-                  <Badge className="bg-violet-100 text-violet-900">
-                    <Clock3 className="mr-1 h-3.5 w-3.5" />
-                    {Math.max(
-                      0,
-                      Math.ceil(
-                        (new Date(currentGame.winnerWindowEndsAt).getTime() -
-                          winnerWindowNow) /
-                          1000,
-                      ),
-                    )}
-                    s left
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-violet-100 text-violet-900">
+                      <Clock3 className="mr-1 h-3.5 w-3.5" />
+                      {Math.max(
+                        0,
+                        Math.ceil(
+                          (new Date(currentGame.winnerWindowEndsAt).getTime() -
+                            winnerWindowNow) /
+                            1000,
+                        ),
+                      )}
+                      s left
+                    </Badge>
+                    <LoadingButton
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (!currentGame.sessionId) {
+                          return;
+                        }
+                        lockTransitionUi(
+                          currentGame.sessionId,
+                          "FINISHED",
+                          "finish_winner_window",
+                        );
+                        finishWinnerWindow.mutate(currentGame.sessionId);
+                      }}
+                      isLoading={finishWinnerWindow.isPending}
+                      loadingLabel="Finishing..."
+                      disabled={!currentGame.sessionId || transitionLocked}
+                    >
+                      Finish now
+                    </LoadingButton>
+                  </div>
                 </div>
               </div>
             )}
@@ -1709,22 +1865,64 @@ export function GameOperations() {
 
       {/* B. NEXT REGISTRATION */}
       {showNextRegistration && standardRegistrationOpenGame && (
-        <Card className="border-blue-200 bg-gradient-to-br from-blue-50/80 to-slate-50">
+        <Card
+          className={cn(
+            "border-blue-200 bg-gradient-to-br from-blue-50/80 to-slate-50",
+            isBonusOperationItem(standardRegistrationOpenGame) &&
+              "border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/70",
+            isBigGotdOperationItem(standardRegistrationOpenGame) &&
+              "border-yellow-300 bg-gradient-to-br from-yellow-50 to-yellow-100/70",
+          )}
+        >
           <CardHeader className="pb-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Clock3 className="h-5 w-5 text-blue-600" />
-                  <CardTitle className="text-blue-950">
+                  <Clock3
+                    className={cn(
+                      "h-5 w-5 text-blue-600",
+                      isBonusOperationItem(standardRegistrationOpenGame) &&
+                        "text-amber-700",
+                      isBigGotdOperationItem(standardRegistrationOpenGame) &&
+                        "text-yellow-700",
+                    )}
+                  />
+                  <CardTitle
+                    className={cn(
+                      "text-blue-950",
+                      isBonusOperationItem(standardRegistrationOpenGame) &&
+                        "text-amber-950",
+                      isBigGotdOperationItem(standardRegistrationOpenGame) &&
+                        "text-yellow-950",
+                    )}
+                  >
                     {currentGame
                       ? "Next round registration"
                       : "Registration open"}
                   </CardTitle>
-                  <Badge className="bg-blue-100 text-blue-800">
+                  <Badge
+                    className={cn(
+                      "bg-blue-100 text-blue-800",
+                      isBonusOperationItem(standardRegistrationOpenGame) &&
+                        "bg-amber-200 text-amber-950",
+                      isBigGotdOperationItem(standardRegistrationOpenGame) &&
+                        "bg-yellow-200 text-yellow-950",
+                    )}
+                  >
                     {standardRegistrationOpenGame.rawStatus === "NEXT"
                       ? "NEW"
                       : "READY"}
                   </Badge>
+                  {isBonusOperationItem(standardRegistrationOpenGame) ? (
+                    <Badge className="bg-amber-200 text-amber-950 hover:bg-amber-200">
+                      Bonus
+                    </Badge>
+                  ) : null}
+                  {isBigGotdOperationItem(standardRegistrationOpenGame) ? (
+                    <Badge className="bg-yellow-200 text-yellow-950 hover:bg-yellow-200">
+                      Big GOTD
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {standardRegistrationOpenGame.staticCode}
@@ -1755,20 +1953,42 @@ export function GameOperations() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    setCancelQueuedTarget({
+                    setQueuedSlotAction({
                       slotId: standardRegistrationOpenGame.slotId,
                       label: standardRegistrationOpenGame.staticCode,
+                      mode:
+                        (standardRegistrationOpenGame.registeredCartelasCount ??
+                          0) > 0
+                          ? "cancel"
+                          : "clear",
+                      registeredCartelasCount:
+                        standardRegistrationOpenGame.registeredCartelasCount,
                     })
                   }
                   isLoading={isMutationPendingFor(
-                    cancelQueuedSlot,
+                    removeQueuedSlot,
                     standardRegistrationOpenGame.slotId,
                   )}
-                  loadingLabel="Cancelling..."
+                  loadingLabel={
+                    (standardRegistrationOpenGame.registeredCartelasCount ??
+                      0) > 0
+                      ? "Cancelling..."
+                      : "Clearing..."
+                  }
                   className="border-red-200 bg-white text-red-600 hover:bg-red-50"
                 >
-                  <Ban className="mr-2 h-4 w-4" />
-                  Cancel
+                  {(standardRegistrationOpenGame.registeredCartelasCount ??
+                    0) > 0 ? (
+                    <>
+                      <Ban className="mr-2 h-4 w-4" />
+                      Cancel
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Clear
+                    </>
+                  )}
                 </LoadingButton>
                 {standardRegistrationOpenGame.operationMode ===
                 "AUTO" ? null : (
@@ -1776,15 +1996,24 @@ export function GameOperations() {
                   // POST /admin/slots/:id/start as an emergency override.
                   <LoadingButton
                     size="sm"
-                    onClick={() =>
-                      startGame.mutate(standardRegistrationOpenGame.slotId)
-                    }
+                    onClick={() => {
+                      const sessionId = standardRegistrationOpenGame.sessionId;
+                      if (!sessionId) {
+                        return;
+                      }
+                      lockTransitionUi(
+                        sessionId,
+                        "PLAYING",
+                        "start_game",
+                      );
+                      startGame.mutate(sessionId);
+                    }}
                     isLoading={isMutationPendingFor(
                       startGame,
-                      standardRegistrationOpenGame.slotId,
+                      standardRegistrationOpenGame.sessionId ?? "",
                     )}
                     loadingLabel="Starting..."
-                    disabled={!!currentGame}
+                    disabled={!!currentGame || !standardRegistrationOpenGame.sessionId || transitionLocked}
                     className="bg-blue-600 hover:bg-blue-700"
                     title={
                       currentGame
@@ -1959,23 +2188,40 @@ export function GameOperations() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    setCancelQueuedTarget({
+                    setQueuedSlotAction({
                       slotId: scheduledBigGame.gameSlotId,
                       label: scheduledBigGame.staticCode,
+                      mode:
+                        (scheduledBigGame.registeredCartelasCount ?? 0) > 0
+                          ? "cancel"
+                          : "clear",
                       registeredCartelasCount:
                         scheduledBigGame.registeredCartelasCount,
                     })
                   }
                   isLoading={isMutationPendingFor(
-                    cancelQueuedSlot,
+                    removeQueuedSlot,
                     scheduledBigGame.gameSlotId,
                   )}
-                  loadingLabel="Cancelling..."
+                  loadingLabel={
+                    (scheduledBigGame.registeredCartelasCount ?? 0) > 0
+                      ? "Cancelling..."
+                      : "Clearing..."
+                  }
                   disabled={scheduledBigGame.status === "WINNER_WINDOW"}
                   className="border-red-200 bg-white text-red-600 hover:bg-red-50"
                 >
-                  <Ban className="mr-2 h-4 w-4" />
-                  Cancel
+                  {(scheduledBigGame.registeredCartelasCount ?? 0) > 0 ? (
+                    <>
+                      <Ban className="mr-2 h-4 w-4" />
+                      Cancel
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Clear
+                    </>
+                  )}
                 </LoadingButton>
               </div>
             </div>
@@ -2177,10 +2423,21 @@ export function GameOperations() {
                   return (
                     <div
                       key={getOperationItemKey(game)}
-                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                      className={cn(
+                        "flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between",
+                        getCategorySurfaceClassName(game),
+                      )}
                     >
                       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-sm font-medium">
+                        <span
+                          className={cn(
+                            "flex h-8 w-8 items-center justify-center rounded-full bg-muted text-sm font-medium",
+                            isBonusOperationItem(game) &&
+                              "bg-amber-200/80 text-amber-950",
+                            isBigGotdOperationItem(game) &&
+                              "bg-yellow-200/80 text-yellow-950",
+                          )}
+                        >
                           {queuePosition}
                         </span>
                         <div>
@@ -2191,13 +2448,13 @@ export function GameOperations() {
                             <Badge variant="outline" className="text-xs">
                               {game.rawStatus === "READY" ? "Ready" : "New"}
                             </Badge>
-                            {game.isBonus ? (
-                              <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">
+                            {isBonusOperationItem(game) ? (
+                              <Badge className="bg-amber-200 text-amber-950 hover:bg-amber-200">
                                 Bonus
                               </Badge>
                             ) : null}
-                            {game.category === "BIG_GOTD" ? (
-                              <Badge className="bg-yellow-100 text-yellow-900 hover:bg-yellow-100">
+                            {isBigGotdOperationItem(game) ? (
+                              <Badge className="bg-yellow-200 text-yellow-950 hover:bg-yellow-200">
                                 Big GOTD
                               </Badge>
                             ) : null}
@@ -2234,19 +2491,23 @@ export function GameOperations() {
                           variant="ghost"
                           size="sm"
                           onClick={() =>
-                            setCancelQueuedTarget({
+                            setQueuedSlotAction({
                               slotId: game.slotId,
                               label: game.staticCode,
+                              mode: "clear",
+                              registeredCartelasCount:
+                                game.registeredCartelasCount,
                             })
                           }
                           isLoading={isMutationPendingFor(
-                            cancelQueuedSlot,
+                            removeQueuedSlot,
                             game.slotId,
                           )}
                           loadingLabel="..."
-                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                          className="text-muted-foreground hover:bg-muted hover:text-foreground"
+                          title="Clear from queue"
                         >
-                          <Ban className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                         </LoadingButton>
                       </div>
                     </div>
@@ -2288,8 +2549,10 @@ export function GameOperations() {
               {createGameCategory === "BIG_GAME"
                 ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time."
                 : createGameCategory === "BIG_GOTD"
-                  ? "Create a paid fixed-prize Big GOTD round. It stays in the standard queue, uses a fixed prize, and limits cartelas per player like Bonus."
-                  : "Choose a game type and active rule. New bonus games are free, fixed-prize rounds that are removed after they finish."}
+                  ? "Create a paid fixed-prize Big GOTD round. Added at the end of the standard queue; removed after it finishes or is cancelled."
+                  : createGameCategory === "BONUS"
+                    ? "Create a free fixed-prize bonus round. Added at the end of the queue; removed after it finishes or is cancelled."
+                    : "Choose a game type and active rule. New games are added at the end of the queue."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2830,34 +3093,47 @@ export function GameOperations() {
             return;
           }
           setCancelLiveOpen(false);
+          lockTransitionUi(
+            currentGame.sessionId,
+            "CANCELLED",
+            "cancel_ready_session",
+          );
           cancelLiveSession.mutate(currentGame.sessionId);
         }}
-        isPending={cancelLiveSession.isPending}
+        isPending={cancelLiveSession.isPending || transitionLocked}
       />
 
       <ConfirmActionDialog
-        open={Boolean(cancelQueuedTarget)}
+        open={Boolean(queuedSlotAction)}
         onOpenChange={(open) => {
           if (!open) {
-            setCancelQueuedTarget(null);
+            setQueuedSlotAction(null);
           }
         }}
-        title="Cancel queued game"
-        description={
-          cancelQueuedTarget
-            ? cancelQueuedTarget.registeredCartelasCount
-              ? `Cancel ${cancelQueuedTarget.label}. ${cancelQueuedTarget.registeredCartelasCount} registered cartela(s) will be refunded automatically.`
-              : `Cancel ${cancelQueuedTarget.label} and remove it from the queue.`
-            : "Cancel this game."
+        title={
+          queuedSlotAction?.mode === "clear"
+            ? "Clear from queue"
+            : "Cancel game"
         }
-        confirmLabel="Cancel game"
+        description={
+          queuedSlotAction
+            ? queuedSlotAction.mode === "clear"
+              ? `Remove ${queuedSlotAction.label} from the waiting queue.`
+              : (queuedSlotAction.registeredCartelasCount ?? 0) > 0
+                ? `Cancel ${queuedSlotAction.label}. ${queuedSlotAction.registeredCartelasCount} registered cartela(s) will be refunded automatically.`
+                : `Cancel ${queuedSlotAction.label} and remove it from the queue.`
+            : "Update this game."
+        }
+        confirmLabel={
+          queuedSlotAction?.mode === "clear" ? "Clear game" : "Cancel game"
+        }
         confirmVariant="destructive"
         onConfirm={() => {
-          if (cancelQueuedTarget) {
-            cancelQueuedSlot.mutate(cancelQueuedTarget.slotId);
+          if (queuedSlotAction) {
+            removeQueuedSlot.mutate(queuedSlotAction.slotId);
           }
         }}
-        isPending={cancelQueuedSlot.isPending}
+        isPending={removeQueuedSlot.isPending}
       />
 
       <ConfirmActionDialog
@@ -2934,10 +3210,6 @@ export function GameOperations() {
 function GameOperationsSkeleton() {
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Game Operations"
-        description="Manage live games, registrations, and queue"
-      />
       {[1, 2].map((item) => (
         <Card key={item}>
           <CardContent className="space-y-4 p-6">

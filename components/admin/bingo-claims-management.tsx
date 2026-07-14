@@ -20,7 +20,6 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import { Button } from "@/components/ui/button";
 import {
@@ -87,11 +86,6 @@ export function BingoClaimsManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Bingo Claims"
-        description="Review and approve bingo claims that need admin action."
-      />
-
       <Card>
         <CardHeader className="gap-3 border-b border-border/60">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

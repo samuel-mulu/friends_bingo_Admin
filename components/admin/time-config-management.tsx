@@ -25,7 +25,6 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
-import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -121,8 +120,8 @@ const playerUiFields: TimingField[] = [
 const refreshFields: TimingField[] = [
   {
     key: "adminRefreshDebounceMs",
-    label: "Admin operations debounce (ms)",
-    hint: "Delay before REST refresh after socket structural events.",
+    label: "Admin refresh delay (ms)",
+    hint: "Short delay before refreshing admin data after live updates.",
     min: 500,
     max: 30000,
     step: 100,
@@ -130,14 +129,14 @@ const refreshFields: TimingField[] = [
   {
     key: "adminFallbackPollingSeconds",
     label: "Admin fallback polling (seconds)",
-    hint: "Polling interval when the operations socket is disconnected.",
+    hint: "How often to refresh when live updates are disconnected.",
     min: 1,
     max: 60,
   },
   {
     key: "flutterRefetchDebounceMs",
-    label: "Flutter refetch debounce (ms)",
-    hint: "Player app delay before canonical REST refresh after socket bursts.",
+    label: "Player app refresh delay (ms)",
+    hint: "Short delay before the player app refreshes after live updates.",
     min: 100,
     max: 5000,
     step: 50,
@@ -427,10 +426,6 @@ export function TimeConfigManagement() {
   if (timeConfigQuery.isError || !timeConfigQuery.data || !draft) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Time Config"
-          description="Default timings for new games."
-        />
         <AdminErrorState
           title="Could not load timing defaults"
           description={getApiErrorMessage(timeConfigQuery.error)}
@@ -444,11 +439,6 @@ export function TimeConfigManagement() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Time Config"
-        description="Default timings for new games."
-      />
-
       <Card>
         <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
