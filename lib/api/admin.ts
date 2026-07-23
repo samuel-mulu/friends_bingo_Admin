@@ -5,15 +5,20 @@ import type {
   AdminExpense,
   AdminGame,
   AdminDeposit,
+  AdminDeviceListItem,
+  AdminDevicesSummary,
   AdminSession,
   AdminUserDetail,
   AdminUserFinancialHistory,
   AdminUserListItem,
+  AdminWalletTransaction,
+  AdminPlayerGameHistoryItem,
   AdminWithdrawal,
   CreateExpensePayload,
   CreateAdminBroadcastPayload,
   CalledNumbersResponse,
   CallNumberPayload,
+  SessionWinnerResultsResponse,
   CreateGamePayload,
   FinancialReport,
   GameRuleSummary,
@@ -246,12 +251,44 @@ export function markWithdrawalPaid(withdrawalId: string, payoutRef?: string) {
 export function getAdminUsers(
   page = 1,
   pageSize = 20,
-  role?: "ADMIN" | "PLAYER",
+  options?: {
+    role?: "ADMIN" | "PLAYER";
+    search?: string;
+    sortBy?: "balance" | "createdAt";
+    sortOrder?: "asc" | "desc";
+  },
 ) {
   return apiPaginatedRequest<AdminUserListItem>({
     url: "/admin/users",
     method: "GET",
-    params: { page, pageSize, role },
+    params: {
+      page,
+      pageSize,
+      role: options?.role,
+      search: options?.search?.trim() || undefined,
+      sortBy: options?.sortBy ?? "balance",
+      sortOrder: options?.sortOrder ?? "desc",
+    },
+  });
+}
+
+export function getAdminDevices(
+  page = 1,
+  pageSize = 20,
+  options?: {
+    search?: string;
+    duplicatesOnly?: boolean;
+  },
+) {
+  return apiPaginatedRequest<AdminDeviceListItem, AdminDevicesSummary>({
+    url: "/admin/devices",
+    method: "GET",
+    params: {
+      page,
+      pageSize,
+      search: options?.search?.trim() || undefined,
+      duplicatesOnly: options?.duplicatesOnly ? true : undefined,
+    },
   });
 }
 
@@ -265,6 +302,73 @@ export function getAdminUserById(userId: string) {
 export function getAdminUserFinancialHistory(userId: string) {
   return apiRequest<AdminUserFinancialHistory>({
     url: `/admin/users/${userId}/financial-history`,
+    method: "GET",
+  });
+}
+
+export function getAdminUserGameHistory(
+  userId: string,
+  page = 1,
+  pageSize = 20,
+) {
+  return apiPaginatedRequest<AdminPlayerGameHistoryItem>({
+    url: `/admin/users/${userId}/game-history`,
+    method: "GET",
+    params: { page, pageSize },
+  });
+}
+
+export function getAdminUserWalletTransactions(
+  userId: string,
+  page = 1,
+  pageSize = 20,
+) {
+  return apiPaginatedRequest<AdminWalletTransaction>({
+    url: `/admin/users/${userId}/wallet-transactions`,
+    method: "GET",
+    params: { page, pageSize },
+  });
+}
+
+export function getSessionCalledNumbers(sessionId: string) {
+  return apiRequest<CalledNumbersResponse>({
+    url: `/games/sessions/${sessionId}/called-numbers`,
+    method: "GET",
+  });
+}
+
+export type SessionRegisteredPlayer = {
+  userId: string;
+  fullName: string;
+  phoneNumber: string;
+  cartelas: Array<{
+    gameCartelaId: string;
+    cartelaNumber: number;
+    status: string;
+  }>;
+};
+
+export type SessionRegisteredPlayersResponse = {
+  sessionId: string;
+  playCode: string;
+  status: string;
+  staticCode: string;
+  gameName: string;
+  registeredCartelasCount: number;
+  playersCount: number;
+  players: SessionRegisteredPlayer[];
+};
+
+export function getSessionRegisteredPlayers(sessionId: string) {
+  return apiRequest<SessionRegisteredPlayersResponse>({
+    url: `/admin/sessions/${sessionId}/registered-players`,
+    method: "GET",
+  });
+}
+
+export function getSessionWinnerResults(sessionId: string) {
+  return apiRequest<SessionWinnerResultsResponse>({
+    url: `/games/sessions/${sessionId}/winner-results`,
     method: "GET",
   });
 }
@@ -503,6 +607,13 @@ export function deleteAdminBroadcast(id: string) {
   return apiRequest<{ success: boolean }>({
     url: `/admin/broadcasts/${id}`,
     method: "DELETE",
+  });
+}
+
+export function getOpenSupportMessageCount() {
+  return apiRequest<{ count: number }>({
+    url: "/admin/support/messages/open-count",
+    method: "GET",
   });
 }
 

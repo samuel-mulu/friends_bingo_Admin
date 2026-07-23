@@ -8,6 +8,7 @@ export interface ApiSuccessEnvelope<T> {
       totalItems: number;
       totalPages: number;
     };
+    summary?: unknown;
   };
   timestamp?: string;
   path?: string;
@@ -20,9 +21,10 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
-export interface PaginatedResult<T> {
+export interface PaginatedResult<T, TSummary = undefined> {
   items: T[];
   pagination: PaginationMeta;
+  summary?: TSummary;
 }
 
 export interface ApiErrorEnvelope {
@@ -85,6 +87,38 @@ export interface AdminUserListItem {
   createdAt: string;
 }
 
+export interface AdminDeviceAccount {
+  userId: string;
+  fullName: string;
+  phoneNumber: string;
+  status: "ACTIVE" | "BLOCKED";
+}
+
+export interface AdminDeviceWelcomeBonus {
+  granted: boolean;
+  phoneNumber: string | null;
+  userId: string | null;
+  bonusAmount: number | null;
+  grantedAt: string | null;
+}
+
+export interface AdminDeviceListItem {
+  deviceId: string;
+  accountCount: number;
+  isDuplicate: boolean;
+  phoneNumbers: string[];
+  accounts: AdminDeviceAccount[];
+  welcomeBonus: AdminDeviceWelcomeBonus;
+  recommendationCode: "NORMAL" | "NORMAL_NO_BONUS" | "REVIEW_MULTI_ACCOUNT";
+  recommendation: string;
+  lastSeenAt: string | null;
+}
+
+export interface AdminDevicesSummary {
+  totalDevices: number;
+  duplicateDevices: number;
+}
+
 export interface WalletSummary {
   id: string;
   userId: string;
@@ -111,6 +145,69 @@ export interface AdminUserDetail {
     winnerCartelas: number;
     transactions: number;
   };
+}
+
+export interface AdminPlayerGameCartela {
+  id: string;
+  gameSessionId: string;
+  userId: string;
+  cartelaId: string;
+  status: string;
+  isWinner: boolean;
+  cartela: {
+    id: string;
+    number: number;
+    b: Array<number | string>;
+    i: Array<number | string>;
+    n: Array<number | string>;
+    g: Array<number | string>;
+    o: Array<number | string>;
+  };
+}
+
+export interface AdminPlayerGameHistoryItem {
+  id: string;
+  sessionId: string;
+  playCode: string;
+  name: string;
+  gameType: string;
+  entryFee: string;
+  prizePerCartela: string;
+  prizeAmount: string;
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  registeredCartelasCount: number;
+  calledNumbersCount: number;
+  myCartelas: AdminPlayerGameCartela[];
+}
+
+export interface SessionWinnerCompletedPattern {
+  type: string;
+  key?: string;
+  numbers: number[];
+  cells: [number, number][];
+}
+
+export interface SessionWinnerResultItem {
+  gameCartelaId: string;
+  cartelaId: string;
+  cartelaNumber: number;
+  owner?: "ME" | "OTHER";
+  amount: string;
+  b: Array<number | string>;
+  i: Array<number | string>;
+  n: Array<number | string>;
+  g: Array<number | string>;
+  o: Array<number | string>;
+  completedPatterns: SessionWinnerCompletedPattern[];
+  winningBallCellIndex?: number | null;
+  lastCalledNumber?: { letter: string; number: number } | null;
+}
+
+export interface SessionWinnerResultsResponse {
+  sessionId: string;
+  winnerResults: SessionWinnerResultItem[];
 }
 
 export type WalletTransactionType =
@@ -452,7 +549,12 @@ export interface GamesReportWinner {
   gameName: string;
   gameType: string;
   finishedAt: string | null;
+  /** Prize share credited to this winning cartela. */
   prizeAmount: string;
+  /** Full session prize pool (before split). */
+  sessionPrizeAmount?: string;
+  /** How many winning cartelas shared this game. */
+  winnersInGame?: number;
   winnerCartelaId: string | null;
   winnerUser: AdminUser | null;
   cartelaNumber: string | number | null;

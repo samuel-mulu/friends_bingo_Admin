@@ -129,16 +129,30 @@ export function exportGamesReportPdf(input: GamesReportPdfInput) {
   } else {
     autoTable(doc, {
       startY: y,
-      head: [["Game", "Type", "Winner", "Phone", "Cartela", "Prize", "Finished"]],
-      body: report.winners.map((winner) => [
-        `${winner.gameName}\n${winner.gameCode}`,
-        winner.gameType,
-        winner.winnerUser?.fullName ?? "Unknown",
-        winner.winnerUser?.phoneNumber ?? "—",
-        String(winner.cartelaNumber ?? "—"),
-        formatCurrency(winner.prizeAmount),
-        winner.finishedAt ? winner.finishedAt.slice(0, 16).replace("T", " ") : "—",
-      ]),
+      head: [["Game", "Type", "Winner", "Phone", "Cartela", "Prize share", "Finished"]],
+      body: report.winners.map((winner) => {
+        const winnersInGame = winner.winnersInGame ?? 1;
+        const prizeLabel =
+          winnersInGame > 1 && winner.sessionPrizeAmount
+            ? `${formatCurrency(winner.prizeAmount)}\n(of ${formatCurrency(winner.sessionPrizeAmount)})`
+            : formatCurrency(winner.prizeAmount);
+        const gameLabel =
+          winnersInGame > 1
+            ? `${winner.gameName}\n${winner.gameCode} · ${winnersInGame} winners`
+            : `${winner.gameName}\n${winner.gameCode}`;
+
+        return [
+          gameLabel,
+          winner.gameType,
+          winner.winnerUser?.fullName ?? "Unknown",
+          winner.winnerUser?.phoneNumber ?? "—",
+          winner.cartelaNumber != null ? `#${winner.cartelaNumber}` : "—",
+          prizeLabel,
+          winner.finishedAt
+            ? winner.finishedAt.slice(0, 16).replace("T", " ")
+            : "—",
+        ];
+      }),
       theme: "plain",
       styles: {
         font: "helvetica",

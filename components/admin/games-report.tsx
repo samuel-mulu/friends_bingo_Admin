@@ -15,6 +15,7 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
+  Copy,
   Download,
   Gamepad2,
   Loader2,
@@ -26,8 +27,10 @@ import {
 
 import { getGamesReport } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import type { GamesReportWinner } from "@/lib/api/types";
 import { adminToast } from "@/lib/admin/admin-toast";
 import { exportGamesReportPdf } from "@/lib/admin/export-games-report-pdf";
+import { formatTelegramWinnerMessage } from "@/lib/admin/format-telegram-winner-message";
 import {
   deriveFinancialRange,
   formatDayLabel,
@@ -128,6 +131,51 @@ export function GamesReportView() {
         : [],
     [gamesQuery.data],
   );
+
+  const winnerRows = useMemo(() => {
+    const winners = gamesQuery.data?.winners ?? [];
+    const gameOrder: string[] = [];
+    const byGame = new Map<string, GamesReportWinner[]>();
+
+    for (const winner of winners) {
+      const existing = byGame.get(winner.gameId);
+      if (existing) {
+        existing.push(winner);
+      } else {
+        gameOrder.push(winner.gameId);
+        byGame.set(winner.gameId, [winner]);
+      }
+    }
+
+    const gameIndexById = new Map(
+      gameOrder.map((gameId, index) => [gameId, index + 1]),
+    );
+
+    return winners.map((winner) => {
+      const gameWinners = byGame.get(winner.gameId) ?? [winner];
+      return {
+        winner,
+        gameIndex: gameIndexById.get(winner.gameId) ?? 0,
+        gameWinners,
+        isFirstOfGame: gameWinners[0]?.winnerCartelaId === winner.winnerCartelaId,
+      };
+    });
+  }, [gamesQuery.data?.winners]);
+
+  const copyGameForTelegram = async (gameWinners: GamesReportWinner[]) => {
+    const message = formatTelegramWinnerMessage(gameWinners);
+    if (!message) {
+      adminToast.error("Nothing to copy for this game.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(message);
+      adminToast.success("Telegram winner message copied.");
+    } catch {
+      adminToast.error("Could not copy to clipboard.");
+    }
+  };
 
   const canGoNext =
     mode === "daily"
@@ -442,7 +490,9 @@ export function GamesReportView() {
             <CardHeader>
               <CardTitle>Winners</CardTitle>
               <CardDescription>
-                Finished games with recorded winners in the selected period.
+                Finished games with recorded winners in the selected period,
+                newest first. Shared wins list every winning cartela and its
+                prize share. Use copy for a Telegram community post.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pt-0">
@@ -455,49 +505,98 @@ export function GamesReportView() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-12 text-right">#</TableHead>
                       <TableHead>Game</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Winner</TableHead>
                       <TableHead>Cartela</TableHead>
-                      <TableHead className="text-right">Prize</TableHead>
+                      <TableHead className="text-right">Prize share</TableHead>
                       <TableHead>Finished</TableHead>
+                      <TableHead className="w-14 text-right">Copy</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {gamesQuery.data.winners.map((winner) => (
-                      <TableRow key={winner.winnerCartelaId ?? winner.gameId}>
-                        <TableCell>
-                          <div className="min-w-[200px]">
-                            <div className="font-medium">{winner.gameName}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {winner.gameCode}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>{winner.gameType}</TableCell>
-                        <TableCell>
-                          {winner.winnerUser ? (
-                            <div className="min-w-[180px]">
-                              <div className="font-medium">
-                                {winner.winnerUser.fullName}
+                    {winnerRows.map(
+                      ({ winner, gameIndex, gameWinners, isFirstOfGame }) => {
+                        const winnersInGame = winner.winnersInGame ?? 1;
+                        const sessionPrize = winner.sessionPrizeAmount;
+
+                        return (
+                          <TableRow
+                            key={
+                              winner.winnerCartelaId ??
+                              `${winner.gameId}-${winner.cartelaNumber}`
+                            }
+                          >
+                            <TableCell className="text-right tabular-nums text-muted-foreground">
+                              {isFirstOfGame ? gameIndex : ""}
+                            </TableCell>
+                            <TableCell>
+                              <div className="min-w-[200px]">
+                                <div className="font-medium">
+                                  {winner.gameName}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {winner.gameCode}
+                                  {winnersInGame > 1
+                                    ? ` · ${winnersInGame} winners`
+                                    : ""}
+                                </div>
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                {winner.winnerUser.phoneNumber}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">Unknown</span>
-                          )}
-                        </TableCell>
-                        <TableCell>{winner.cartelaNumber ?? "-"}</TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatCurrency(winner.prizeAmount)}
-                        </TableCell>
-                        <TableCell>
-                          {formatDateTime(winner.finishedAt)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            </TableCell>
+                            <TableCell>{winner.gameType}</TableCell>
+                            <TableCell>
+                              {winner.winnerUser ? (
+                                <div className="min-w-[180px]">
+                                  <div className="font-medium">
+                                    {winner.winnerUser.fullName}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {winner.winnerUser.phoneNumber}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  Unknown
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {winner.cartelaNumber != null
+                                ? `#${winner.cartelaNumber}`
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              <div>{formatCurrency(winner.prizeAmount)}</div>
+                              {winnersInGame > 1 && sessionPrize ? (
+                                <div className="text-xs font-normal text-muted-foreground">
+                                  of {formatCurrency(sessionPrize)}
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell>
+                              {formatDateTime(winner.finishedAt)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {isFirstOfGame ? (
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="outline"
+                                  aria-label="Copy Telegram winner message"
+                                  title="Copy Telegram winner message"
+                                  onClick={() =>
+                                    void copyGameForTelegram(gameWinners)
+                                  }
+                                >
+                                  <Copy className="size-4" />
+                                </Button>
+                              ) : null}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      },
+                    )}
                   </TableBody>
                 </Table>
               )}

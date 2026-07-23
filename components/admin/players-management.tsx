@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Eye, Wallet } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Eye,
+  History,
+  ReceiptText,
+  Search,
+  Smartphone,
+  Wallet,
+} from "lucide-react";
+import Link from "next/link";
 
 import { getAdminUserById, getAdminUsers } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
+import { adminToast } from "@/lib/admin/admin-toast";
 import {
   coerceMoneyAmount,
   formatCurrency,
@@ -18,6 +29,8 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
+import { PlayerGameHistoryDialog } from "@/components/admin/player-game-history-dialog";
+import { PlayerTransactionHistoryDialog } from "@/components/admin/player-transaction-history-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +40,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Sheet,
   SheetContent,
@@ -49,32 +63,79 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const pageSize = 20;
+const pageSize = 150;
 type UserRoleFilter = "PLAYER" | "ADMIN";
+type SortKey = "balance" | "createdAt";
 
-const usersQueryKey = (page: number, role: UserRoleFilter) =>
-  ["admin", "users", page, role] as const;
-const userDetailQueryKey = (userId: string) => ["admin", "users", userId] as const;
+const usersQueryKey = (
+  page: number,
+  role: UserRoleFilter,
+  search: string,
+  sortBy: SortKey,
+) => ["admin", "users", page, role, search, sortBy] as const;
+const userDetailQueryKey = (userId: string) =>
+  ["admin", "users", userId] as const;
+
+async function copyText(value: string) {
+  await navigator.clipboard.writeText(value);
+}
 
 export function PlayersManagement() {
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState<UserRoleFilter>("PLAYER");
+  const [sortBy, setSortBy] = useState<SortKey>("balance");
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [gameHistoryOpen, setGameHistoryOpen] = useState(false);
+  const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
+  const [selectedPhoneIds, setSelectedPhoneIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [copiedPhone, setCopiedPhone] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setSelectedPhoneIds(new Set());
+  }, [page, roleFilter, debouncedSearch, sortBy]);
 
   const usersQuery = useQuery({
-    queryKey: usersQueryKey(page, roleFilter),
-    queryFn: () => getAdminUsers(page, pageSize, roleFilter),
+    queryKey: usersQueryKey(page, roleFilter, debouncedSearch, sortBy),
+    queryFn: () =>
+      getAdminUsers(page, pageSize, {
+        role: roleFilter,
+        search: debouncedSearch || undefined,
+        sortBy,
+        sortOrder: "desc",
+      }),
   });
 
   const userDetailQuery = useQuery({
-    queryKey: selectedUserId ? userDetailQueryKey(selectedUserId) : ["admin", "users", "detail"],
+    queryKey: selectedUserId
+      ? userDetailQueryKey(selectedUserId)
+      : ["admin", "users", "detail"],
     queryFn: () => getAdminUserById(selectedUserId as string),
     enabled: Boolean(selectedUserId),
   });
 
-  const selectedListUser = usersQuery.data?.items.find(
-    (user) => user.id === selectedUserId,
+  const pageUsers = usersQuery.data?.items ?? [];
+  const pageUserIds = useMemo(
+    () => pageUsers.map((user) => user.id),
+    [pageUsers],
   );
+  const allPageSelected =
+    pageUserIds.length > 0 &&
+    pageUserIds.every((id) => selectedPhoneIds.has(id));
+  const selectedCount = selectedPhoneIds.size;
+
+  const selectedListUser = pageUsers.find((user) => user.id === selectedUserId);
 
   const availableBalance = (() => {
     const fromDetail =
@@ -86,7 +147,6 @@ export function PlayersManagement() {
         ? coerceMoneyAmount(selectedListUser.walletBalance)
         : null;
 
-    // Prefer detail, but keep table balance if detail wrongly resolves to 0.
     if (fromDetail != null && fromList != null) {
       if (fromDetail === "0" && fromList !== "0") {
         return fromList;
@@ -100,6 +160,69 @@ export function PlayersManagement() {
     userDetailQuery.data?.wallet?.lockedBalance,
   );
 
+  const togglePhoneSelection = (userId: string, checked: boolean) => {
+    setSelectedPhoneIds((previous) => {
+      const next = new Set(previous);
+      if (checked) {
+        next.add(userId);
+      } else {
+        next.delete(userId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllOnPage = (checked: boolean) => {
+    setSelectedPhoneIds((previous) => {
+      const next = new Set(previous);
+      for (const id of pageUserIds) {
+        if (checked) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleCopyPhone = async (phoneNumber: string) => {
+    try {
+      await copyText(phoneNumber);
+      setCopiedPhone(phoneNumber);
+      window.setTimeout(() => {
+        setCopiedPhone((current) =>
+          current === phoneNumber ? null : current,
+        );
+      }, 1500);
+      adminToast.success("Phone number copied.");
+    } catch {
+      adminToast.error("Could not copy phone number.");
+    }
+  };
+
+  const handleCopySelectedPhones = async () => {
+    const phones = pageUsers
+      .filter((user) => selectedPhoneIds.has(user.id))
+      .map((user) => user.phoneNumber);
+
+    if (phones.length === 0) {
+      adminToast.error("Select at least one phone number.");
+      return;
+    }
+
+    try {
+      await copyText(phones.join("\n"));
+      adminToast.success(
+        phones.length === 1
+          ? "1 phone number copied."
+          : `${phones.length} phone numbers copied.`,
+      );
+    } catch {
+      adminToast.error("Could not copy phone numbers.");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -108,10 +231,34 @@ export function PlayersManagement() {
             <div className="space-y-1">
               <CardTitle>Player directory</CardTitle>
               <CardDescription>
-                Search by status, role, and wallet balance.
+                Search by name or phone. Default sort is highest balance first.
               </CardDescription>
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="relative w-full sm:w-[240px]">
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  placeholder="Search name or phone"
+                  className="pl-9"
+                />
+              </div>
+              <Select
+                value={sortBy}
+                onValueChange={(value) => {
+                  setSortBy(value as SortKey);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="balance">Balance (high → low)</SelectItem>
+                  <SelectItem value="createdAt">Created (newest)</SelectItem>
+                </SelectContent>
+              </Select>
               <Select
                 value={roleFilter}
                 onValueChange={(value) => {
@@ -119,7 +266,7 @@ export function PlayersManagement() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-[160px]">
                   <SelectValue placeholder="Filter by role" />
                 </SelectTrigger>
                 <SelectContent>
@@ -127,9 +274,26 @@ export function PlayersManagement() {
                   <SelectItem value="ADMIN">Admins</SelectItem>
                 </SelectContent>
               </Select>
+              <Button type="button" variant="outline" asChild>
+                <Link href="/devices">
+                  <Smartphone className="size-4" />
+                  Devices
+                </Link>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={selectedCount === 0}
+                onClick={() => void handleCopySelectedPhones()}
+              >
+                <Copy className="size-4" />
+                Copy selected
+                {selectedCount > 0 ? ` (${selectedCount})` : ""}
+              </Button>
               <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
                 <div className="font-medium text-foreground">
-                  {usersQuery.data?.pagination.totalItems.toLocaleString() ?? "0"}{" "}
+                  {usersQuery.data?.pagination.totalItems.toLocaleString() ??
+                    "0"}{" "}
                   {roleFilter === "ADMIN" ? "admins" : "players"}
                 </div>
               </div>
@@ -139,7 +303,7 @@ export function PlayersManagement() {
 
         <CardContent className="px-0 pt-0">
           {usersQuery.isLoading ? (
-            <AdminTableSkeleton columns={7} />
+            <AdminTableSkeleton columns={9} />
           ) : usersQuery.isError ? (
             <AdminErrorState
               title="Could not load players"
@@ -155,9 +319,11 @@ export function PlayersManagement() {
                 roleFilter === "ADMIN" ? "No admins found" : "No players found"
               }
               description={
-                roleFilter === "ADMIN"
-                  ? "Admin accounts will appear here once they are created."
-                  : "Player accounts will appear here once people start registering."
+                debouncedSearch
+                  ? "No accounts match this search."
+                  : roleFilter === "ADMIN"
+                    ? "Admin accounts will appear here once they are created."
+                    : "Player accounts will appear here once people start registering."
               }
             />
           ) : (
@@ -165,6 +331,18 @@ export function PlayersManagement() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all phone numbers on this page"
+                        className="size-4 accent-primary"
+                        checked={allPageSelected}
+                        onChange={(event) =>
+                          toggleSelectAllOnPage(event.target.checked)
+                        }
+                      />
+                    </TableHead>
+                    <TableHead className="w-14">#</TableHead>
                     <TableHead>Full name</TableHead>
                     <TableHead>Phone number</TableHead>
                     <TableHead>Role</TableHead>
@@ -175,10 +353,45 @@ export function PlayersManagement() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {usersQuery.data.items.map((user) => (
+                  {usersQuery.data.items.map((user, index) => (
                     <TableRow key={user.id}>
-                      <TableCell className="font-medium">{user.fullName}</TableCell>
-                      <TableCell>{user.phoneNumber}</TableCell>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${user.phoneNumber}`}
+                          className="size-4 accent-primary"
+                          checked={selectedPhoneIds.has(user.id)}
+                          onChange={(event) =>
+                            togglePhoneSelection(user.id, event.target.checked)
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        {(page - 1) * pageSize + index + 1}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {user.fullName}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1.5">
+                          <span>{user.phoneNumber}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Copy ${user.phoneNumber}`}
+                            onClick={() =>
+                              void handleCopyPhone(user.phoneNumber)
+                            }
+                          >
+                            {copiedPhone === user.phoneNumber ? (
+                              <Check className="size-3.5 text-emerald-600" />
+                            ) : (
+                              <Copy className="size-3.5" />
+                            )}
+                          </Button>
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline">{user.role}</Badge>
                       </TableCell>
@@ -217,6 +430,8 @@ export function PlayersManagement() {
         onOpenChange={(open) => {
           if (!open) {
             setSelectedUserId(null);
+            setGameHistoryOpen(false);
+            setTransactionHistoryOpen(false);
           }
         }}
       >
@@ -251,12 +466,21 @@ export function PlayersManagement() {
                       {userDetailQuery.data.phoneNumber}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="grid gap-4 sm:grid-cols-2">
-                    <DetailItem label="Role" value={userDetailQuery.data.role} />
+                  <CardContent className="grid gap-3 sm:grid-cols-2">
+                    <DetailItem
+                      label="Role"
+                      value={
+                        <Badge variant="outline">
+                          {userDetailQuery.data.role}
+                        </Badge>
+                      }
+                    />
                     <DetailItem
                       label="Status"
                       value={
-                        <AdminStatusBadge status={userDetailQuery.data.status} />
+                        <AdminStatusBadge
+                          status={userDetailQuery.data.status}
+                        />
                       }
                     />
                     <DetailItem
@@ -272,38 +496,24 @@ export function PlayersManagement() {
 
                 <Card size="sm">
                   <CardHeader>
-                    <div className="flex items-center gap-2">
-                      <div className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                        <Wallet className="size-4" />
-                      </div>
-                      <CardTitle>Wallet summary</CardTitle>
-                    </div>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Wallet className="size-4" />
+                      Wallet
+                    </CardTitle>
                   </CardHeader>
-                  <CardContent className="grid gap-4 sm:grid-cols-2">
+                  <CardContent className="grid gap-3 sm:grid-cols-2">
                     <DetailItem
-                      label="Available balance"
-                      value={
-                        <span className="text-base font-semibold">
-                          {formatCurrency(availableBalance)}
-                        </span>
-                      }
+                      label="Available"
+                      value={formatCurrency(availableBalance)}
                     />
                     <DetailItem
-                      label="Locked balance"
-                      value={
-                        <span className="text-base font-semibold">
-                          {formatCurrency(lockedBalance)}
-                        </span>
-                      }
+                      label="Locked"
+                      value={formatCurrency(lockedBalance)}
                     />
                     <DetailItem
-                      label="Wallet ID"
-                      value={userDetailQuery.data.wallet?.id ?? "-"}
-                    />
-                    <DetailItem
-                      label="Wallet updated"
-                      value={formatDateTime(
-                        userDetailQuery.data.wallet?.updatedAt ?? null,
+                      label="Bonus cartelas"
+                      value={String(
+                        userDetailQuery.data.wallet?.bonusCartelaBalance ?? 0,
                       )}
                     />
                   </CardContent>
@@ -311,36 +521,68 @@ export function PlayersManagement() {
 
                 <Card size="sm">
                   <CardHeader>
-                    <CardTitle>Activity snapshot</CardTitle>
+                    <CardTitle className="text-base">Activity</CardTitle>
                   </CardHeader>
-                  <CardContent className="grid gap-4 sm:grid-cols-2">
+                  <CardContent className="grid gap-3 sm:grid-cols-2">
                     <DetailItem
                       label="Deposits"
-                      value={userDetailQuery.data.counts.deposits.toLocaleString()}
+                      value={String(userDetailQuery.data.counts.deposits)}
                     />
                     <DetailItem
                       label="Withdrawals"
-                      value={userDetailQuery.data.counts.withdrawals.toLocaleString()}
+                      value={String(userDetailQuery.data.counts.withdrawals)}
                     />
                     <DetailItem
-                      label="Game registrations"
-                      value={userDetailQuery.data.counts.gameCartelas.toLocaleString()}
+                      label="Game cartelas"
+                      value={String(userDetailQuery.data.counts.gameCartelas)}
                     />
                     <DetailItem
-                      label="Winning cartelas"
-                      value={userDetailQuery.data.counts.winnerCartelas.toLocaleString()}
+                      label="Wins"
+                      value={String(userDetailQuery.data.counts.winnerCartelas)}
                     />
                     <DetailItem
-                      label="Wallet transactions"
-                      value={userDetailQuery.data.counts.transactions.toLocaleString()}
+                      label="Transactions"
+                      value={String(userDetailQuery.data.counts.transactions)}
                     />
                   </CardContent>
                 </Card>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setGameHistoryOpen(true)}
+                  >
+                    <History className="size-4" />
+                    Game history
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setTransactionHistoryOpen(true)}
+                  >
+                    <ReceiptText className="size-4" />
+                    Transactions
+                  </Button>
+                </div>
               </>
             )}
           </div>
         </SheetContent>
       </Sheet>
+
+      <PlayerGameHistoryDialog
+        userId={selectedUserId}
+        playerName={userDetailQuery.data?.fullName}
+        open={gameHistoryOpen && Boolean(selectedUserId)}
+        onOpenChange={setGameHistoryOpen}
+      />
+      <PlayerTransactionHistoryDialog
+        userId={selectedUserId}
+        playerName={userDetailQuery.data?.fullName}
+        open={transactionHistoryOpen && Boolean(selectedUserId)}
+        onOpenChange={setTransactionHistoryOpen}
+      />
     </div>
   );
 }

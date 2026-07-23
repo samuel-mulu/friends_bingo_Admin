@@ -10,6 +10,7 @@ import {
   MessageSquare,
   ReceiptText,
   Settings,
+  Smartphone,
   Users,
 } from "lucide-react";
 
@@ -24,6 +25,7 @@ export const adminNavigation: NavigationItem[] = [
   { href: "/games", label: "Games", icon: Gamepad2 },
   { href: "/bingo-claims", label: "Bingo Claims", icon: BadgeCheck },
   { href: "/players", label: "Players", icon: Users },
+  { href: "/devices", label: "Devices", icon: Smartphone },
   { href: "/feedback", label: "Feedback", icon: Inbox },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/deposits", label: "Deposits", icon: CreditCard },

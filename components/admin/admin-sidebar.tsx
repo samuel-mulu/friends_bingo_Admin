@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { Menu, PanelLeftClose } from "lucide-react";
 
 import { adminNavigation, adminSecondaryNavigation } from "@/lib/navigation";
+import { useOpenFeedbackCount } from "@/lib/admin/use-open-feedback-count";
 import { usePendingWithdrawalsCount } from "@/lib/admin/use-pending-withdrawals-count";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,7 @@ function SidebarContent({
   onNavigate: () => void;
 }) {
   const { count: pendingWithdrawals } = usePendingWithdrawalsCount();
+  const { count: openFeedback } = useOpenFeedbackCount();
 
   return (
     <div className="flex h-full flex-col gap-6">
@@ -98,7 +100,15 @@ function SidebarContent({
             pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           const badgeCount =
-            item.href === "/withdrawals" ? pendingWithdrawals : 0;
+            item.href === "/withdrawals"
+              ? pendingWithdrawals
+              : item.href === "/feedback"
+                ? openFeedback
+                : 0;
+          const badgeLabel =
+            item.href === "/feedback"
+              ? `${badgeCount} open feedback`
+              : `${badgeCount} pending withdrawals`;
 
           return (
             <Link
@@ -122,7 +132,7 @@ function SidebarContent({
                       ? "bg-white text-red-600"
                       : "bg-red-600 text-white",
                   )}
-                  aria-label={`${badgeCount} pending withdrawals`}
+                  aria-label={badgeLabel}
                 >
                   {badgeCount > 99 ? "99+" : badgeCount}
                 </span>

@@ -73,9 +73,9 @@ export async function apiEnvelopeRequest<T>(
   return response.data;
 }
 
-export async function apiPaginatedRequest<T>(
+export async function apiPaginatedRequest<T, TSummary = undefined>(
   config: AxiosRequestConfig,
-): Promise<PaginatedResult<T>> {
+): Promise<PaginatedResult<T, TSummary>> {
   const envelope = await apiEnvelopeRequest<T[]>(config);
   const pagination = envelope.meta?.pagination ?? {
     page: 1,
@@ -87,6 +87,7 @@ export async function apiPaginatedRequest<T>(
   return {
     items: envelope.data,
     pagination,
+    summary: envelope.meta?.summary as TSummary | undefined,
   };
 }
 

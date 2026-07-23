@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut, ReceiptText, Shield } from "lucide-react";
+import { Inbox, LogOut, ReceiptText, Shield } from "lucide-react";
 
 import { AdminSidebarToggle } from "@/components/admin/admin-sidebar";
+import { useOpenFeedbackCount } from "@/lib/admin/use-open-feedback-count";
 import { usePendingWithdrawalsCount } from "@/lib/admin/use-pending-withdrawals-count";
 import { pageTitleFromPath } from "@/lib/navigation";
 import { useCookieAuth } from "@/lib/auth/cookie-provider";
@@ -35,8 +36,11 @@ export function AdminTopbar({
   const { logout } = useCookieAuth();
   const user = initialUser;
   const { count: pendingWithdrawals } = usePendingWithdrawalsCount();
+  const { count: openFeedback } = useOpenFeedbackCount();
   const isWithdrawalsActive =
     pathname === "/withdrawals" || pathname.startsWith("/withdrawals/");
+  const isFeedbackActive =
+    pathname === "/feedback" || pathname.startsWith("/feedback/");
 
   return (
     <header className="z-20 shrink-0 border-b border-border/60 bg-white/80 backdrop-blur">
@@ -76,6 +80,30 @@ export function AdminTopbar({
                   aria-label={`${pendingWithdrawals} pending withdrawals`}
                 >
                   {pendingWithdrawals > 99 ? "99+" : pendingWithdrawals}
+                </span>
+              ) : null}
+            </Link>
+          </Button>
+
+          <Button
+            asChild
+            variant={isFeedbackActive ? "default" : "outline"}
+            className="relative h-10 gap-2 px-3"
+          >
+            <Link href="/feedback" aria-label="Open feedback">
+              <Inbox className="size-4" />
+              <span className="hidden sm:inline">Feedback</span>
+              {openFeedback > 0 ? (
+                <span
+                  className={cn(
+                    "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
+                    isFeedbackActive
+                      ? "bg-white text-red-600"
+                      : "bg-red-600 text-white",
+                  )}
+                  aria-label={`${openFeedback} open feedback`}
+                >
+                  {openFeedback > 99 ? "99+" : openFeedback}
                 </span>
               ) : null}
             </Link>
