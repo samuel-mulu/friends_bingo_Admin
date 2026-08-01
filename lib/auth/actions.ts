@@ -8,17 +8,11 @@ import {
   setSessionCookies,
   updateAccessToken,
 } from "./cookies";
+import { resolveApiBaseUrl } from "./server-token";
 import type { AdminSession, LoginPayload } from "@/lib/api/types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  process.env.API_BASE_URL?.trim() ||
-  process.env.INTERNAL_API_URL?.trim() ||
-  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
-
 export async function loginAction(payload: LoginPayload) {
-  if (!API_BASE_URL) {
+  if (!resolveApiBaseUrl()) {
     return {
       success: false,
       error: "Backend API URL is not configured.",
@@ -52,7 +46,8 @@ export async function loginAction(payload: LoginPayload) {
 }
 
 export async function logoutAction() {
-  if (!API_BASE_URL) {
+  const apiBaseUrl = resolveApiBaseUrl();
+  if (!apiBaseUrl) {
     await clearSessionCookies();
     redirect("/login");
   }
@@ -62,7 +57,7 @@ export async function logoutAction() {
   // Optional: Call backend logout to revoke refresh token
   if (refreshToken) {
     try {
-      await fetch(`${API_BASE_URL}/auth/logout`, {
+      await fetch(`${apiBaseUrl}/auth/logout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
@@ -77,7 +72,8 @@ export async function logoutAction() {
 }
 
 export async function refreshTokenAction() {
-  if (!API_BASE_URL) {
+  const apiBaseUrl = resolveApiBaseUrl();
+  if (!apiBaseUrl) {
     return { success: false, error: "Backend API URL is not configured." };
   }
 
@@ -89,7 +85,7 @@ export async function refreshTokenAction() {
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/auth/refresh`,
+      `${apiBaseUrl}/auth/refresh`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

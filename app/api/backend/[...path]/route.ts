@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE_URL = resolveApiBaseUrl();
-
-const ACCESS_TOKEN_KEY = "access_token";
-const REFRESH_TOKEN_KEY = "refresh_token";
-const USER_DATA_KEY = "user_data";
-const ACCESS_TOKEN_MAX_AGE = 30 * 60;
-const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60;
+import {
+  ACCESS_TOKEN_KEY,
+  clearSessionCookies,
+  refreshAccessToken,
+  resolveApiBaseUrl,
+  setTokenCookies,
+} from "@/lib/auth/server-token";
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
-};
-
-type RefreshedTokens = {
-  accessToken: string;
-  refreshToken?: string;
 };
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -41,6 +36,7 @@ async function proxyBackendRequest(
   request: NextRequest,
   context: RouteContext,
 ) {
+  const API_BASE_URL = resolveApiBaseUrl();
   if (!API_BASE_URL) {
     return backendUnavailableResponse(
       "Backend API URL is not configured for this deployment.",
@@ -119,46 +115,6 @@ async function readRequestBody(request: NextRequest) {
   return body.length > 0 ? body : undefined;
 }
 
-async function refreshAccessToken(
-  request: NextRequest,
-): Promise<RefreshedTokens | null> {
-  if (!API_BASE_URL) {
-    return null;
-  }
-
-  const refreshToken = request.cookies.get(REFRESH_TOKEN_KEY)?.value;
-  if (!refreshToken) {
-    return null;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-    cache: "no-store",
-  }).catch(() => null);
-
-  if (!response?.ok) {
-    return null;
-  }
-
-  const data = await response.json().catch(() => null);
-  const accessToken = data?.data?.accessToken;
-  if (typeof accessToken !== "string" || accessToken.length === 0) {
-    return null;
-  }
-
-  const nextRefreshToken =
-    typeof data?.data?.refreshToken === "string"
-      ? data.data.refreshToken
-      : undefined;
-
-  return {
-    accessToken,
-    refreshToken: nextRefreshToken,
-  };
-}
-
 async function toNextResponse(response: Response) {
   const headers = new Headers(response.headers);
   headers.delete("connection");
@@ -176,50 +132,6 @@ async function toNextResponse(response: Response) {
     statusText: response.statusText,
     headers,
   });
-}
-
-function setTokenCookies(response: NextResponse, tokens: RefreshedTokens) {
-  response.cookies.set(ACCESS_TOKEN_KEY, tokens.accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: ACCESS_TOKEN_MAX_AGE,
-    path: "/",
-  });
-
-  if (tokens.refreshToken) {
-    response.cookies.set(REFRESH_TOKEN_KEY, tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: REFRESH_TOKEN_MAX_AGE,
-      path: "/",
-    });
-  }
-}
-
-function clearSessionCookies(response: NextResponse) {
-  response.cookies.delete(ACCESS_TOKEN_KEY);
-  response.cookies.delete(REFRESH_TOKEN_KEY);
-  response.cookies.delete(USER_DATA_KEY);
-}
-
-function resolveApiBaseUrl() {
-  const configured =
-    process.env.NEXT_PUBLIC_API_URL?.trim() ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-    process.env.API_BASE_URL?.trim() ||
-    process.env.INTERNAL_API_URL?.trim();
-
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    return null;
-  }
-
-  return "http://localhost:3002";
 }
 
 async function fetchBackend(
