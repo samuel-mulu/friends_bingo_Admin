@@ -6,6 +6,7 @@ import { Menu, PanelLeftClose } from "lucide-react";
 
 import { adminNavigation, adminSecondaryNavigation } from "@/lib/navigation";
 import { useOpenFeedbackCount } from "@/lib/admin/use-open-feedback-count";
+import { usePendingDepositsCount } from "@/lib/admin/use-pending-deposits-count";
 import { usePendingWithdrawalsCount } from "@/lib/admin/use-pending-withdrawals-count";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,7 @@ function SidebarContent({
   pathname: string;
   onNavigate: () => void;
 }) {
+  const { count: pendingDeposits } = usePendingDepositsCount();
   const { count: pendingWithdrawals } = usePendingWithdrawalsCount();
   const { count: openFeedback } = useOpenFeedbackCount();
 
@@ -100,15 +102,19 @@ function SidebarContent({
             pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           const badgeCount =
-            item.href === "/withdrawals"
-              ? pendingWithdrawals
-              : item.href === "/feedback"
-                ? openFeedback
-                : 0;
+            item.href === "/deposits"
+              ? pendingDeposits
+              : item.href === "/withdrawals"
+                ? pendingWithdrawals
+                : item.href === "/feedback"
+                  ? openFeedback
+                  : 0;
           const badgeLabel =
-            item.href === "/feedback"
-              ? `${badgeCount} open feedback`
-              : `${badgeCount} pending withdrawals`;
+            item.href === "/deposits"
+              ? `${badgeCount} pending deposits`
+              : item.href === "/feedback"
+                ? `${badgeCount} open feedback`
+                : `${badgeCount} pending withdrawals`;
 
           return (
             <Link

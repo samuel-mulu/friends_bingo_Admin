@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Eye,
   Gamepad2,
   Loader2,
   Target,
@@ -47,6 +48,7 @@ import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { AdminEmptyState } from "@/components/admin/admin-table-state";
 import { ReportDateRangeFilter } from "@/components/admin/report-date-range-filter";
 import { ReportMetricCard } from "@/components/admin/report-metric-card";
+import { SessionRegisteredPlayersDialog } from "@/components/admin/session-registered-players-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -77,6 +79,10 @@ export function GamesReportView() {
   );
   const [rangeTo, setRangeTo] = useState(getTodayDateKey);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [viewPlayersGame, setViewPlayersGame] = useState<{
+    sessionId: string;
+    label: string;
+  } | null>(null);
 
   const { from, to } = useMemo(
     () =>
@@ -491,8 +497,8 @@ export function GamesReportView() {
               <CardTitle>Winners</CardTitle>
               <CardDescription>
                 Finished games with recorded winners in the selected period,
-                newest first. Shared wins list every winning cartela and its
-                prize share. Use copy for a Telegram community post.
+                newest first. Use View to see all players and cartelas for a
+                game. Use Copy for a Telegram community post.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pt-0">
@@ -512,7 +518,7 @@ export function GamesReportView() {
                       <TableHead>Cartela</TableHead>
                       <TableHead className="text-right">Prize share</TableHead>
                       <TableHead>Finished</TableHead>
-                      <TableHead className="w-14 text-right">Copy</TableHead>
+                      <TableHead className="w-24 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -579,18 +585,35 @@ export function GamesReportView() {
                             </TableCell>
                             <TableCell className="text-right">
                               {isFirstOfGame ? (
-                                <Button
-                                  type="button"
-                                  size="icon-sm"
-                                  variant="outline"
-                                  aria-label="Copy Telegram winner message"
-                                  title="Copy Telegram winner message"
-                                  onClick={() =>
-                                    void copyGameForTelegram(gameWinners)
-                                  }
-                                >
-                                  <Copy className="size-4" />
-                                </Button>
+                                <div className="flex justify-end gap-1">
+                                  <Button
+                                    type="button"
+                                    size="icon-sm"
+                                    variant="outline"
+                                    aria-label="View players and cartelas"
+                                    title="View players and cartelas"
+                                    onClick={() =>
+                                      setViewPlayersGame({
+                                        sessionId: winner.gameId,
+                                        label: `${winner.gameName} · ${winner.gameCode}`,
+                                      })
+                                    }
+                                  >
+                                    <Eye className="size-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="icon-sm"
+                                    variant="outline"
+                                    aria-label="Copy Telegram winner message"
+                                    title="Copy Telegram winner message"
+                                    onClick={() =>
+                                      void copyGameForTelegram(gameWinners)
+                                    }
+                                  >
+                                    <Copy className="size-4" />
+                                  </Button>
+                                </div>
                               ) : null}
                             </TableCell>
                           </TableRow>
@@ -604,6 +627,17 @@ export function GamesReportView() {
           </Card>
         </div>
       )}
+
+      <SessionRegisteredPlayersDialog
+        sessionId={viewPlayersGame?.sessionId ?? null}
+        label={viewPlayersGame?.label}
+        open={Boolean(viewPlayersGame)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewPlayersGame(null);
+          }
+        }}
+      />
     </div>
   );
 }

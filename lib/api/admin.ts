@@ -5,6 +5,8 @@ import type {
   AdminExpense,
   AdminGame,
   AdminDeposit,
+  AdminDepositsSummary,
+  DepositStatus,
   AdminDeviceListItem,
   AdminDevicesSummary,
   AdminSession,
@@ -12,8 +14,11 @@ import type {
   AdminUserFinancialHistory,
   AdminUserListItem,
   AdminWalletTransaction,
+  AdminWalletTransactionCategory,
+  AdminWalletTransactionReferenceStatus,
   AdminPlayerGameHistoryItem,
   AdminWithdrawal,
+  WithdrawalStatus,
   CreateExpensePayload,
   CreateAdminBroadcastPayload,
   CalledNumbersResponse,
@@ -25,7 +30,12 @@ import type {
   GamesReport,
   LoginPayload,
   GameTimingConfig,
+  DepositApprovalConfig,
+  UpdateDepositApprovalConfigPayload,
+  HouseChampionsQueryParams,
+  HouseChampionsResponse,
   OverviewReport,
+  PaymentProvider,
   PlayerSupportMessage,
   PlayerSupportStatus,
   ReplySupportMessagePayload,
@@ -46,6 +56,14 @@ export function getOverviewReport() {
   return apiRequest<OverviewReport>({
     url: "/admin/reports/overview",
     method: "GET",
+  });
+}
+
+export function getHouseChampions(params: HouseChampionsQueryParams = {}) {
+  return apiRequest<HouseChampionsResponse>({
+    url: "/admin/leaderboard/cartela-wins",
+    method: "GET",
+    params,
   });
 }
 
@@ -138,6 +156,8 @@ export interface GameOperationsCurrentResponse {
   checkingGame: GameOperationItem | null;
   registrationOpenGame: GameOperationItem | null;
   queue: GameOperationItem[];
+  operationsState?: "active" | "handoff" | "idle";
+  operationsVersion?: number;
   timestamp: string;
   serverNow?: string;
   bigGameLiveElsewhere?: {
@@ -183,18 +203,37 @@ export function getCurrentBigGame() {
   });
 }
 
-export function getAdminDeposits(page = 1, pageSize = 20) {
-  return apiPaginatedRequest<AdminDeposit>({
+export function getAdminDeposits(
+  page = 1,
+  pageSize = 20,
+  options?: {
+    search?: string;
+    provider?: PaymentProvider;
+    status?: DepositStatus;
+    from?: string;
+    to?: string;
+  },
+) {
+  return apiPaginatedRequest<AdminDeposit, AdminDepositsSummary>({
     url: "/admin/deposits",
     method: "GET",
-    params: { page, pageSize },
+    params: {
+      page,
+      pageSize,
+      search: options?.search?.trim() || undefined,
+      provider: options?.provider,
+      status: options?.status,
+      from: options?.from || undefined,
+      to: options?.to || undefined,
+    },
   });
 }
 
-export function approveDeposit(depositId: string) {
+export function approveDeposit(depositId: string, approvalPin: string) {
   return apiRequest<AdminDeposit>({
     url: `/admin/deposits/${depositId}/approve`,
     method: "PATCH",
+    data: { approvalPin },
   });
 }
 
@@ -206,17 +245,54 @@ export function rejectDeposit(depositId: string, rejectionReason: string) {
   });
 }
 
-export function getAdminWithdrawals(page = 1, pageSize = 20) {
+export function getAdminWithdrawals(
+  page = 1,
+  pageSize = 20,
+  options?: {
+    search?: string;
+    provider?: PaymentProvider;
+    status?: WithdrawalStatus;
+    from?: string;
+    to?: string;
+  },
+) {
   return apiPaginatedRequest<AdminWithdrawal>({
     url: "/admin/withdrawals",
     method: "GET",
-    params: { page, pageSize },
+    params: {
+      page,
+      pageSize,
+      search: options?.search?.trim() || undefined,
+      provider: options?.provider,
+      status: options?.status,
+      from: options?.from || undefined,
+      to: options?.to || undefined,
+    },
   });
 }
 
 export function getPendingWithdrawalCount() {
   return apiRequest<{ count: number }>({
     url: "/admin/withdrawals/pending-count",
+    method: "GET",
+  });
+}
+
+export function getPendingDepositCount() {
+  return apiRequest<{ count: number }>({
+    url: "/admin/deposits/pending-count",
+    method: "GET",
+  });
+}
+
+export function getGeezSmsBalance() {
+  return apiRequest<{
+    enabled: boolean;
+    balance: string | null;
+    currency: string | null;
+    error: string | null;
+  }>({
+    url: "/admin/sms/balance",
     method: "GET",
   });
 }
@@ -322,11 +398,20 @@ export function getAdminUserWalletTransactions(
   userId: string,
   page = 1,
   pageSize = 20,
+  filters?: {
+    category?: AdminWalletTransactionCategory;
+    status?: AdminWalletTransactionReferenceStatus;
+  },
 ) {
   return apiPaginatedRequest<AdminWalletTransaction>({
     url: `/admin/users/${userId}/wallet-transactions`,
     method: "GET",
-    params: { page, pageSize },
+    params: {
+      page,
+      pageSize,
+      category: filters?.category,
+      status: filters?.status,
+    },
   });
 }
 
@@ -381,7 +466,9 @@ export function getAdminGameRules() {
 }
 
 export function createAdminGame(payload: CreateGamePayload) {
-  return apiRequest<AdminGame>({
+  return apiRequest<
+    AdminGame & { operations?: GameOperationsCurrentResponse }
+  >({
     url: "/admin/slots",
     method: "POST",
     data: payload,
@@ -478,6 +565,7 @@ export interface ClearQueueResponse {
   clearedSlotsCount: number;
   cancelledEmptyRegistration: boolean;
   keptRegistration: boolean;
+  operations?: GameOperationsCurrentResponse;
 }
 
 export function clearAdminQueue() {
@@ -577,6 +665,23 @@ export function getAdminTimeConfig() {
   return apiRequest<GameTimingConfig>({
     url: "/admin/time-config",
     method: "GET",
+  });
+}
+
+export function getAdminDepositApprovalConfig() {
+  return apiRequest<DepositApprovalConfig>({
+    url: "/admin/deposit-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminDepositApprovalConfig(
+  payload: UpdateDepositApprovalConfigPayload,
+) {
+  return apiRequest<DepositApprovalConfig>({
+    url: "/admin/deposit-config",
+    method: "PATCH",
+    data: payload,
   });
 }
 

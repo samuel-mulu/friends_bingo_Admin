@@ -1,8 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BadgeCheck, ExternalLink, Send, XCircle } from "lucide-react";
+import {
+  BadgeCheck,
+  ExternalLink,
+  RotateCcw,
+  Search,
+  Send,
+  XCircle,
+} from "lucide-react";
 
 import {
   approveWithdrawal,
@@ -11,7 +18,7 @@ import {
   rejectWithdrawal,
 } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import type { AdminWithdrawal } from "@/lib/api/types";
+import type { AdminWithdrawal, PaymentProvider, WithdrawalStatus } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
@@ -36,6 +43,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -132,8 +148,44 @@ function WithdrawalReceiverCell({ withdrawal }: { withdrawal: AdminWithdrawal })
 }
 
 const pageSize = 20;
-const withdrawalsQueryKey = (page: number) =>
-  ["admin", "withdrawals", page] as const;
+const ALL_PROVIDERS = "all" as const;
+const ALL_STATUSES = "all" as const;
+const DATE_MODE_ALL = "all" as const;
+const DATE_MODE_RANGE = "range" as const;
+
+const withdrawalProviderOptions: Array<{ key: PaymentProvider; name: string }> =
+  [
+    { key: "TELEBIRR", name: "Telebirr" },
+    { key: "CBE", name: "CBE" },
+    { key: "AWASH", name: "Awash" },
+    { key: "BOA", name: "Bank of Abyssinia" },
+  ];
+
+type ProviderFilter = typeof ALL_PROVIDERS | PaymentProvider;
+type StatusFilter = typeof ALL_STATUSES | WithdrawalStatus;
+type DateMode = typeof DATE_MODE_ALL | typeof DATE_MODE_RANGE;
+
+const withdrawalsQueryKey = (
+  page: number,
+  search: string,
+  provider: ProviderFilter,
+  status: StatusFilter,
+  dateMode: DateMode,
+  from: string,
+  to: string,
+) =>
+  [
+    "admin",
+    "withdrawals",
+    page,
+    search,
+    provider,
+    status,
+    dateMode,
+    from,
+    to,
+  ] as const;
+
 const reversibleStatuses = new Set(["PENDING"]);
 
 function isValidPayoutUrl(value: string) {
@@ -147,6 +199,14 @@ function isValidPayoutUrl(value: string) {
 
 export function WithdrawalsManagement() {
   const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [providerFilter, setProviderFilter] =
+    useState<ProviderFilter>(ALL_PROVIDERS);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
+  const [dateMode, setDateMode] = useState<DateMode>(DATE_MODE_ALL);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [approveTarget, setApproveTarget] = useState<AdminWithdrawal | null>(
     null,
   );
@@ -157,9 +217,36 @@ export function WithdrawalsManagement() {
     null,
   );
 
+  const activeFrom = dateMode === DATE_MODE_RANGE ? fromDate : "";
+  const activeTo = dateMode === DATE_MODE_RANGE ? toDate : "";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
   const withdrawalsQuery = useQuery({
-    queryKey: withdrawalsQueryKey(page),
-    queryFn: () => getAdminWithdrawals(page, pageSize),
+    queryKey: withdrawalsQueryKey(
+      page,
+      debouncedSearch,
+      providerFilter,
+      statusFilter,
+      dateMode,
+      activeFrom,
+      activeTo,
+    ),
+    queryFn: () =>
+      getAdminWithdrawals(page, pageSize, {
+        search: debouncedSearch || undefined,
+        provider:
+          providerFilter === ALL_PROVIDERS ? undefined : providerFilter,
+        status: statusFilter === ALL_STATUSES ? undefined : statusFilter,
+        from: activeFrom || undefined,
+        to: activeTo || undefined,
+      }),
   });
 
   const approveMutation = useAdminMutation({
@@ -223,6 +310,23 @@ export function WithdrawalsManagement() {
     };
   }, [withdrawalsQuery.data?.items]);
 
+  const hasActiveFilters =
+    Boolean(debouncedSearch) ||
+    providerFilter !== ALL_PROVIDERS ||
+    statusFilter !== ALL_STATUSES ||
+    dateMode !== DATE_MODE_ALL;
+
+  const resetFilters = () => {
+    setSearchInput("");
+    setDebouncedSearch("");
+    setProviderFilter(ALL_PROVIDERS);
+    setStatusFilter(ALL_STATUSES);
+    setDateMode(DATE_MODE_ALL);
+    setFromDate("");
+    setToDate("");
+    setPage(1);
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -231,8 +335,9 @@ export function WithdrawalsManagement() {
             <div className="space-y-1">
               <CardTitle>Withdrawal operations</CardTitle>
               <CardDescription>
-                Approve and pay with a payout reference. Player locked funds are
-                released when payout is confirmed.
+                Search by player, receiver, or payout reference. Filter by
+                payment method, status, and date. Approve and pay with a payout
+                reference.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -246,6 +351,138 @@ export function WithdrawalsManagement() {
                 </div>
               ) : null}
             </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="relative w-full sm:w-[280px]">
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  placeholder="Search name, phone, receiver, or payout ref"
+                  className="pl-9"
+                />
+              </div>
+              <Select
+                value={providerFilter}
+                onValueChange={(value) => {
+                  setProviderFilter(value as ProviderFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_PROVIDERS}>All methods</SelectItem>
+                  {withdrawalProviderOptions.map((provider) => (
+                    <SelectItem key={provider.key} value={provider.key}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => {
+                  setStatusFilter(value as StatusFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_STATUSES}>All statuses</SelectItem>
+                  <SelectItem value="PENDING">Pending review</SelectItem>
+                  <SelectItem value="APPROVED">Approved (awaiting paid)</SelectItem>
+                  <SelectItem value="PAID">Paid</SelectItem>
+                  <SelectItem value="REJECTED">Rejected</SelectItem>
+                  <SelectItem value="FAILED">Failed</SelectItem>
+                  <SelectItem value="REFUNDED">Refunded</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant={statusFilter === "PENDING" ? "default" : "outline"}
+                onClick={() => {
+                  setStatusFilter(
+                    statusFilter === "PENDING" ? ALL_STATUSES : "PENDING",
+                  );
+                  setPage(1);
+                }}
+              >
+                Pending review
+              </Button>
+              <Select
+                value={dateMode}
+                onValueChange={(value) => {
+                  const nextMode = value as DateMode;
+                  setDateMode(nextMode);
+                  if (nextMode === DATE_MODE_ALL) {
+                    setFromDate("");
+                    setToDate("");
+                  }
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[160px]">
+                  <SelectValue placeholder="Date" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DATE_MODE_ALL}>All dates</SelectItem>
+                  <SelectItem value={DATE_MODE_RANGE}>Date range</SelectItem>
+                </SelectContent>
+              </Select>
+              {hasActiveFilters ? (
+                <Button variant="outline" onClick={resetFilters}>
+                  <RotateCcw className="size-4" />
+                  Reset filters
+                </Button>
+              ) : null}
+            </div>
+
+            {dateMode === DATE_MODE_RANGE ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="withdrawal-from"
+                    className="text-xs text-muted-foreground"
+                  >
+                    From date
+                  </Label>
+                  <Input
+                    id="withdrawal-from"
+                    type="date"
+                    value={fromDate}
+                    onChange={(event) => {
+                      setFromDate(event.target.value);
+                      setPage(1);
+                    }}
+                    className="w-full sm:w-[180px]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="withdrawal-to"
+                    className="text-xs text-muted-foreground"
+                  >
+                    To date
+                  </Label>
+                  <Input
+                    id="withdrawal-to"
+                    type="date"
+                    value={toDate}
+                    onChange={(event) => {
+                      setToDate(event.target.value);
+                      setPage(1);
+                    }}
+                    className="w-full sm:w-[180px]"
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
         </CardHeader>
 
@@ -263,8 +500,14 @@ export function WithdrawalsManagement() {
             />
           ) : !withdrawalsQuery.data || withdrawalsQuery.data.items.length === 0 ? (
             <AdminEmptyState
-              title="No withdrawals yet"
-              description="Player cash-out requests will appear here once the first withdrawals are created."
+              title={
+                hasActiveFilters ? "No matching withdrawals" : "No withdrawals yet"
+              }
+              description={
+                hasActiveFilters
+                  ? "Try a different search, payment method, status, or date range."
+                  : "Player cash-out requests will appear here once the first withdrawals are created."
+              }
             />
           ) : (
             <>
