@@ -40,6 +40,9 @@ export function ActionDialog({
     placeholder?: string;
     defaultValue?: string;
     required?: boolean;
+    minLength?: number;
+    maxLength?: number;
+    inputType?: "text" | "password";
   };
   errorMessage?: string | null;
   extraContent?: ReactNode;
@@ -47,6 +50,12 @@ export function ActionDialog({
   const [value, setValue] = useState(field?.defaultValue ?? "");
   const confirmLockRef = useRef(false);
   const dialogKey = `${open ? "open" : "closed"}:${field?.defaultValue ?? ""}:${title}`;
+
+  const trimmedValue = value.trim();
+  const fieldLengthValid =
+    !field ||
+    (field.minLength === undefined || trimmedValue.length >= field.minLength) &&
+      (field.maxLength === undefined || trimmedValue.length <= field.maxLength);
 
   const handleConfirm = async () => {
     if (confirmLockRef.current || isPending) {
@@ -73,9 +82,12 @@ export function ActionDialog({
             <Label htmlFor="action-dialog-field">{field.label}</Label>
             <Input
               id="action-dialog-field"
+              type={field.inputType ?? "text"}
               placeholder={field.placeholder}
               value={value}
               onChange={(event) => setValue(event.target.value)}
+              inputMode={field.minLength === 6 && field.maxLength === 6 ? "numeric" : undefined}
+              maxLength={field.maxLength}
             />
           </div>
         ) : null}
@@ -97,7 +109,9 @@ export function ActionDialog({
             variant={confirmVariant}
             isLoading={isPending}
             loadingLabel="Working..."
-            disabled={Boolean(field?.required && !value.trim())}
+            disabled={
+              Boolean(field?.required && !trimmedValue) || !fieldLengthValid
+            }
             onClick={() => {
               void handleConfirm();
             }}

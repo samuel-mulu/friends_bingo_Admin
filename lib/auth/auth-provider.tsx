@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * @deprecated Unused after cookie-auth migration.
+ * Do not mount this provider — prefer CookieAuthProvider.
+ */
+
 import {
   createContext,
   useCallback,

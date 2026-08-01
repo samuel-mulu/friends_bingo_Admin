@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Settings,
   Smartphone,
+  Trophy,
   Users,
 } from "lucide-react";
 
@@ -25,6 +26,7 @@ export const adminNavigation: NavigationItem[] = [
   { href: "/games", label: "Games", icon: Gamepad2 },
   { href: "/bingo-claims", label: "Bingo Claims", icon: BadgeCheck },
   { href: "/players", label: "Players", icon: Users },
+  { href: "/champions", label: "House Champions", icon: Trophy },
   { href: "/devices", label: "Devices", icon: Smartphone },
   { href: "/feedback", label: "Feedback", icon: Inbox },
   { href: "/messages", label: "Messages", icon: MessageSquare },
@@ -36,6 +38,7 @@ export const adminNavigation: NavigationItem[] = [
 
 export const adminSecondaryNavigation: NavigationItem[] = [
   { href: "/time-config", label: "Time Config", icon: Clock3 },
+  { href: "/deposit-config", label: "Deposit Config", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

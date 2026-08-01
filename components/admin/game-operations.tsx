@@ -823,7 +823,8 @@ export function GameOperations() {
         }
       }
 
-      scheduleOperationsRefresh(false);
+      // Immediate refresh for structural queue/ready/live changes (no debounce).
+      scheduleOperationsRefresh(true);
     };
 
     const handleTerminalSession = (payload: unknown) => {
@@ -1035,7 +1036,7 @@ export function GameOperations() {
       createAdminGame(buildCreateGameRequestBody(payload)),
     errorMessage: "Could not add the game to the queue.",
     invalidateQueryKeys: [],
-    onSuccess: () => {
+    onSuccess: (data) => {
       setIsCreateGameModalOpen(false);
       setCreateGameError(null);
       if (lastCreateCategoryRef.current === "BIG_GAME") {
@@ -1043,6 +1044,9 @@ export function GameOperations() {
       } else {
         adminToast.success("Game added to queue.");
         scrollToQueueAfterCreateRef.current = true;
+      }
+      if (data.operations) {
+        queryClient.setQueryData(operationsQueryKey, data.operations);
       }
       scheduleOperationsRefresh(true);
     },
@@ -1367,10 +1371,14 @@ export function GameOperations() {
     invalidateQueryKeys: [],
     onSuccess: (result) => {
       setClearQueueOpen(false);
-      optimisticallyClearWaitingQueue(queryClient, {
-        keptRegistration: result.keptRegistration,
-        cancelledEmptyRegistration: result.cancelledEmptyRegistration,
-      });
+      if (result.operations) {
+        queryClient.setQueryData(operationsQueryKey, result.operations);
+      } else {
+        optimisticallyClearWaitingQueue(queryClient, {
+          keptRegistration: result.keptRegistration,
+          cancelledEmptyRegistration: result.cancelledEmptyRegistration,
+        });
+      }
       adminToast.success(
         result.keptRegistration
           ? "Waiting queue cleared. Current registration kept."
@@ -1554,6 +1562,26 @@ export function GameOperations() {
       {!socketConnected ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
           Reconnecting…
+        </div>
+      ) : null}
+
+      {operations?.operationsState === "handoff" &&
+      queue.length > 0 &&
+      !standardRegistrationOpenGame &&
+      !currentGame ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Next game is being prepared — tap Refresh if this stays stuck.
+          </span>
+          <Button
+            onClick={() => void refetch()}
+            variant="outline"
+            size="sm"
+            className="self-start"
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
         </div>
       ) : null}
 

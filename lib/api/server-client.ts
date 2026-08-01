@@ -1,13 +1,7 @@
 "use server";
 
 import { getAccessToken, getRefreshToken, updateAccessToken, clearSessionCookies } from "@/lib/auth/cookies";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  process.env.API_BASE_URL?.trim() ||
-  process.env.INTERNAL_API_URL?.trim() ||
-  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
+import { resolveApiBaseUrl } from "@/lib/auth/server-token";
 
 interface FetchOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -20,8 +14,11 @@ async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = await getRefreshToken();
   if (!refreshToken) return null;
 
+  const apiBaseUrl = resolveApiBaseUrl();
+  if (!apiBaseUrl) return null;
+
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    const response = await fetch(`${apiBaseUrl}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
@@ -90,9 +87,10 @@ export async function serverFetch<T>(
     requestHeaders["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const url = `${API_BASE_URL}${endpoint}`;
+  const apiBaseUrl = resolveApiBaseUrl();
+  const url = `${apiBaseUrl ?? ""}${endpoint}`;
 
-  if (!API_BASE_URL) {
+  if (!apiBaseUrl) {
     throw new Error("Backend API URL is not configured.");
   }
 

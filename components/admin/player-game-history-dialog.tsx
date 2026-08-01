@@ -306,6 +306,7 @@ function PlayerGameSessionDetailDialog({
                     const winner =
                       winnerByCartelaId.get(cartela.id) ??
                       winnerByCartelaId.get(cartela.cartelaId);
+                    const isBlocked = Boolean(cartela.blockedAt);
                     return (
                       <button
                         key={cartela.id}
@@ -315,7 +316,9 @@ function PlayerGameSessionDetailDialog({
                           "rounded-xl border px-4 py-3 text-left transition-colors hover:bg-muted/40",
                           cartela.isWinner
                             ? "border-amber-400/70 bg-amber-50/70"
-                            : "border-border/60",
+                            : isBlocked
+                              ? "border-red-300/70 bg-red-50/40"
+                              : "border-border/60",
                         )}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -323,14 +326,29 @@ function PlayerGameSessionDetailDialog({
                             #{cartela.cartela.number}
                           </div>
                           <Badge
-                            variant={cartela.isWinner ? "default" : "secondary"}
+                            variant={
+                              cartela.isWinner
+                                ? "default"
+                                : isBlocked
+                                  ? "destructive"
+                                  : "secondary"
+                            }
                           >
-                            {cartela.isWinner ? "Winner" : cartela.status}
+                            {cartela.isWinner
+                              ? "Winner"
+                              : isBlocked
+                                ? "Blocked"
+                                : cartela.status}
                           </Badge>
                         </div>
                         {winner ? (
                           <div className="mt-1 text-sm font-semibold text-emerald-700">
                             Prize {formatCurrency(winner.amount)}
+                          </div>
+                        ) : null}
+                        {isBlocked && cartela.blockReason ? (
+                          <div className="mt-1 text-xs text-red-700 line-clamp-2">
+                            {cartela.blockReason}
                           </div>
                         ) : null}
                         <div className="mt-2 text-xs text-muted-foreground">
@@ -611,6 +629,29 @@ function PlayerCartelaBoardDialog({
 
         {cartela && columns ? (
           <div className="space-y-4 overflow-y-auto px-6 py-4">
+            {cartela.blockedAt ? (
+              <div className="rounded-xl border border-red-300/60 bg-red-50 px-3 py-2 text-sm text-red-900 space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <span>Blocked</span>
+                  <span className="font-normal text-red-700">
+                    {formatDateTime(cartela.blockedAt)}
+                  </span>
+                </div>
+                {cartela.blockReason ? (
+                  <div className="text-xs text-red-800">
+                    Reason: {cartela.blockReason}
+                  </div>
+                ) : null}
+                {orderedCalls.length > 0 ? (
+                  <div className="text-xs text-red-700">
+                    Active number when blocked:{" "}
+                    <span className="font-bold">
+                      {orderedCalls[0].letter}-{orderedCalls[0].number}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {winnerResult?.lastCalledNumber ? (
               <div className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
                 Winning ball{" "}

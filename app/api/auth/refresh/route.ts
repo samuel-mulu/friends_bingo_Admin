@@ -1,28 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { resolveApiBaseUrl } from "@/lib/auth/server-token";
+
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
 const USER_DATA_KEY = "user_data";
 const ACCESS_TOKEN_MAX_AGE = 30 * 60;
 const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60;
-
-function resolveApiBaseUrl() {
-  const configured =
-    process.env.NEXT_PUBLIC_API_URL?.trim() ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-    process.env.API_BASE_URL?.trim() ||
-    process.env.INTERNAL_API_URL?.trim();
-
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    return null;
-  }
-
-  return "http://localhost:3002";
-}
 
 function safeNextPath(raw: string | null): string {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {

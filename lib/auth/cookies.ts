@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import type { AdminSession } from "@/lib/api/types";
+import { resolveApiBaseUrl } from "@/lib/auth/server-token";
 
 const ACCESS_TOKEN_KEY = "access_token";
 const REFRESH_TOKEN_KEY = "refresh_token";
@@ -11,13 +12,6 @@ const USER_DATA_KEY = "user_data";
 const ACCESS_TOKEN_MAX_AGE = 30 * 60;
 // 30 days for refresh token
 const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60;
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  process.env.API_BASE_URL?.trim() ||
-  process.env.INTERNAL_API_URL?.trim() ||
-  (process.env.NODE_ENV === "production" ? "" : "http://localhost:3002");
 
 export async function setSessionCookies(session: AdminSession): Promise<void> {
   const cookieStore = await cookies();
@@ -102,10 +96,11 @@ export async function getSessionFromCookies(): Promise<AdminSession | null> {
 async function refreshSessionAccessToken(
   refreshToken: string,
 ): Promise<string | null> {
-  if (!API_BASE_URL) return null;
+  const apiBaseUrl = resolveApiBaseUrl();
+  if (!apiBaseUrl) return null;
 
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    const response = await fetch(`${apiBaseUrl}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),

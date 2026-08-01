@@ -154,6 +154,9 @@ export interface AdminPlayerGameCartela {
   cartelaId: string;
   status: string;
   isWinner: boolean;
+  blockedAt: string | null;
+  blockReason: string | null;
+  blockCheckedAt: string | null;
   cartela: {
     id: string;
     number: number;
@@ -220,6 +223,20 @@ export type WalletTransactionType =
   | "REFUND"
   | "ADMIN_ADJUSTMENT";
 
+export type AdminWalletTransactionCategory =
+  | "ALL"
+  | "DEPOSIT"
+  | "WITHDRAWAL"
+  | "GAME"
+  | "PRIZE"
+  | "OTHER";
+
+export type AdminWalletTransactionReferenceStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "PAID";
+
 export interface AdminWalletTransaction {
   id: string;
   userId: string;
@@ -229,6 +246,7 @@ export interface AdminWalletTransaction {
   balanceAfter: string;
   referenceType: string | null;
   referenceId: string | null;
+  referenceStatus: DepositStatus | WithdrawalStatus | null;
   description: string | null;
   createdAt: string;
 }
@@ -289,9 +307,42 @@ export type PaymentProvider = "CBE" | "TELEBIRR" | "AWASH" | "BOA";
 
 export type DepositStatus = "PENDING" | "APPROVED" | "REJECTED";
 
+export interface AdminDepositProviderOption {
+  key: PaymentProvider;
+  name: string;
+}
+
+export interface AdminDepositsSummary {
+  providers: AdminDepositProviderOption[];
+}
+
 export interface AdminDepositVerifiedData {
   verificationSource?: string;
   decision?: string;
+  approvalModeAtSubmit?: string;
+}
+
+export type DepositApprovalMode = "automatic" | "manual" | "local";
+
+export interface DepositApprovalProviderConfig {
+  provider: PaymentProvider;
+  enabled: boolean;
+  approvalMode: DepositApprovalMode;
+  allowedModes: DepositApprovalMode[];
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface DepositApprovalConfig {
+  providers: DepositApprovalProviderConfig[];
+}
+
+export interface UpdateDepositApprovalConfigPayload {
+  providers: Array<{
+    provider: PaymentProvider;
+    enabled: boolean;
+    approvalMode: DepositApprovalMode;
+  }>;
 }
 
 export interface AdminDeposit {
@@ -677,4 +728,49 @@ export interface PlayerSupportMessage {
 export interface ReplySupportMessagePayload {
   adminReply?: string;
   status?: PlayerSupportStatus;
+}
+
+export type LeaderboardPeriod =
+  | "today"
+  | "week"
+  | "last_week"
+  | "last_30_days"
+  | "all_time"
+  | "custom";
+
+export interface HouseChampionsEntry {
+  rank: number;
+  userId: string;
+  displayName: string;
+  fullName?: string;
+  phoneNumber?: string;
+  cartelaWins: number;
+  gamesWon: number;
+}
+
+export interface HouseChampionsMe {
+  rank: number;
+  cartelaWins: number;
+  gamesWon: number;
+}
+
+export interface HouseChampionsResponse {
+  period: LeaderboardPeriod;
+  timezone: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  labelStart: string | null;
+  labelEnd: string | null;
+  metric: string;
+  limit: number;
+  updatedAt: string;
+  entries: HouseChampionsEntry[];
+  me: HouseChampionsMe | null;
+}
+
+export interface HouseChampionsQueryParams {
+  period?: LeaderboardPeriod;
+  limit?: number;
+  from?: string;
+  to?: string;
 }
