@@ -559,7 +559,7 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Net Revenue"
               value={formatCurrency(financialQuery.data.netRevenue)}
-              description="Game entry total minus prize payouts"
+              description="All game entries (money + bonus) minus prize payouts"
               icon={<Coins className="size-5" />}
             />
             <ReportMetricCard
