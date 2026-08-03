@@ -71,7 +71,6 @@ import {
   getAdminBingoClaims,
   getAdminGameRules,
   getAdminTimeConfig,
-  getCurrentGameOperations,
   getCurrentBigGame,
   getGameCalledNumbers,
   getSessionRegisteredPlayers,
@@ -105,7 +104,6 @@ import {
   readStoredDefaultOperationMode,
   resolveAutoCallIntervalMs,
   shouldPromptApplyModeToCurrentGame,
-  type TimingConfigLike,
   writeStoredDefaultOperationMode,
 } from "@/lib/admin/game-operation-defaults";
 import {
@@ -163,15 +161,16 @@ import {
   type CalledNumbersCache,
   createOptimisticCalledNumber,
   dedupeOperationQueue,
-  dropTerminalSessionFromOperationsCache,
   getOperationItemKey,
-  invalidateOperationsCache,
-  isCalledNumberForActiveSession,
   isTerminalGameStatus,
   logCalledNumberEvent,
   mergeCalledNumbersResponse,
-  normalizeCalledNumberPayload,
   operationsQueryKey,
+  patchOperationsForFinished,
+  patchOperationsForRegistration,
+  patchOperationsForStatusChanged,
+  patchOperationsForWinnerWindow,
+  patchOperationsFromCanonicalEvent,
   refetchCalledNumbersForSession,
   optimisticallyClearWaitingQueue,
   optimisticallyPatchEntryFee,
@@ -179,9 +178,23 @@ import {
   optimisticallyReorderQueue,
   applyRealtimeCalledNumber,
   patchOperationsCache,
-  parseAutoCallScheduleFromPayload,
   readLiveCalledNumbers,
 } from "@/lib/admin/game-operations-cache";
+import {
+  createCurrentGameOperationsQueryOptions,
+  getLastCurrentGameOperationsRefreshAt,
+  getOperationsFallbackPollingMs,
+  isCurrentGameOperationsFetching,
+  isCurrentGameOperationsStale,
+  refreshCurrentGameOperations,
+  shouldRefreshCurrentGameOperationsOnResume,
+} from "@/lib/admin/current-game-operations";
+import {
+  registerGameOperationsRealtimeListeners,
+  resolveNumberCalledRealtimeDecision,
+  resolveStructuralRefreshDecision,
+} from "@/lib/admin/game-operations-realtime";
+import { createOperationsFallbackController } from "@/lib/admin/operations-fallback-controller";
 import { adminToast } from "@/lib/admin/admin-toast";
 import { socketService } from "@/lib/socket/socket-service";
 import { Button } from "@/components/ui/button";
@@ -201,7 +214,6 @@ import {
 } from "@/components/ui/select";
 
 const FALLBACK_OPERATIONS_INVALIDATE_DEBOUNCE_MS = 2500;
-const FALLBACK_OPERATIONS_POLLING_MS = 5000;
 const timeConfigQueryKey = ["admin", "time-config"] as const;
 const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
@@ -299,8 +311,9 @@ export function GameOperations() {
   const operationsInvalidateDebounceMs =
     timeConfig?.adminRefreshDebounceMs ??
     FALLBACK_OPERATIONS_INVALIDATE_DEBOUNCE_MS;
-  const operationsFallbackPollingMs =
-    (timeConfig?.adminFallbackPollingSeconds ?? 5) * 1000;
+  const operationsFallbackPollingMs = getOperationsFallbackPollingMs(
+    timeConfig?.adminFallbackPollingSeconds,
+  );
 
   // CANONICAL: Use backend's single source of truth endpoint
   // Backend decides which game is live/checking/registration/queue
@@ -308,23 +321,8 @@ export function GameOperations() {
     data: operations,
     isLoading,
     error,
-    refetch,
     isFetching,
-  } = useQuery({
-    queryKey: operationsQueryKey,
-    queryFn: getCurrentGameOperations,
-    refetchOnWindowFocus: true,
-    staleTime: 2_000,
-    refetchInterval: false,
-    placeholderData: keepPreviousData,
-    retry: (failureCount, queryError) => {
-      if (queryError instanceof ApiError && queryError.statusCode === 429) {
-        return false;
-      }
-
-      return failureCount < 1;
-    },
-  });
+  } = useQuery(createCurrentGameOperationsQueryOptions());
 
   const { data: scheduledBigGame } = useQuery({
     queryKey: bigGameQueryKey,
@@ -393,14 +391,15 @@ export function GameOperations() {
     null,
   );
   const liveSessionIdRef = useRef(liveSessionId);
-  liveSessionIdRef.current = liveSessionId;
   const previousLiveSessionIdRef = useRef<string | null>(null);
+  const hiddenAtRef = useRef<number | null>(null);
+  const disconnectedWhileHiddenRef = useRef(false);
   const queueSectionRef = useRef<HTMLDivElement | null>(null);
   const scrollToQueueAfterCreateRef = useRef(false);
   const lastCreateCategoryRef = useRef<GameCategory>("NORMAL");
 
   const lockTransitionUi = useCallback(
-    (sessionId: string, targetStatus: string, _command: string) => {
+    (sessionId: string, targetStatus: string) => {
       setTransitionLocked(true);
       setTransitionLockSessionId(sessionId);
       setTransitionLockTargetStatus(targetStatus);
@@ -408,7 +407,7 @@ export function GameOperations() {
     [],
   );
 
-  const unlockTransitionUi = useCallback((_reason: string) => {
+  const unlockTransitionUi = useCallback(() => {
     setTransitionLocked(false);
     setTransitionLockSessionId(null);
     setTransitionLockTargetStatus(null);
@@ -422,7 +421,7 @@ export function GameOperations() {
       }
 
       const refresh = () => {
-        invalidateOperationsCache(queryClient);
+        void refreshCurrentGameOperations(queryClient);
         void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
         void queryClient.invalidateQueries({
           queryKey: ["admin", "big-game", "current"],
@@ -443,20 +442,72 @@ export function GameOperations() {
   );
 
   useEffect(() => {
-    return socketService.onConnectionChange(setSocketConnected);
+    return socketService.onConnectionChange((connected) => {
+      setSocketConnected(connected);
+
+      if (
+        !connected &&
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        disconnectedWhileHiddenRef.current = true;
+      }
+    });
   }, []);
 
   useEffect(() => {
-    if (!pollOperationsFallback) {
+    liveSessionIdRef.current = liveSessionId;
+  }, [liveSessionId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
       return;
     }
 
-    const timer = window.setInterval(() => {
-      void refetch();
-    }, operationsFallbackPollingMs);
+    const controller = createOperationsFallbackController({
+      intervalMs: operationsFallbackPollingMs,
+      isEnabled: () => pollOperationsFallback,
+      isVisible: () => document.visibilityState !== "hidden",
+      isFetching: () => isCurrentGameOperationsFetching(queryClient),
+      onTick: () => {
+        void refreshCurrentGameOperations(queryClient);
+      },
+      onVisible: () => {
+        const hiddenAt = hiddenAtRef.current;
+        const hiddenDurationMs =
+          hiddenAt == null ? 0 : Date.now() - hiddenAt;
+        const shouldRefresh = shouldRefreshCurrentGameOperationsOnResume({
+          hiddenDurationMs,
+          disconnectedWhileHidden: disconnectedWhileHiddenRef.current,
+          isStale: isCurrentGameOperationsStale(queryClient),
+          lastRecoveryRefreshAtMs: getLastCurrentGameOperationsRefreshAt(),
+        });
 
-    return () => window.clearInterval(timer);
-  }, [operationsFallbackPollingMs, pollOperationsFallback, refetch]);
+        hiddenAtRef.current = null;
+        disconnectedWhileHiddenRef.current = false;
+
+        if (shouldRefresh) {
+          void refreshCurrentGameOperations(queryClient, { staleOnly: true });
+        }
+      },
+    });
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+      }
+
+      controller.handleVisibilityChange(document.visibilityState !== "hidden");
+    };
+
+    controller.sync();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      controller.dispose();
+    };
+  }, [operationsFallbackPollingMs, pollOperationsFallback, queryClient]);
 
   const { data: liveCalledNumbersData } = useQuery({
     queryKey: liveSessionId
@@ -487,8 +538,6 @@ export function GameOperations() {
     if (!liveSessionId) {
       return;
     }
-
-    const queryKey = calledNumbersQueryKey(liveSessionId);
 
     return queryClient.getQueryCache().subscribe((event) => {
       if (event.type !== "updated") {
@@ -757,24 +806,26 @@ export function GameOperations() {
 
   useEffect(() => {
     const handleNumberCalled = (payload: unknown) => {
-      const calledNumber = normalizeCalledNumberPayload(payload);
-      const activeSessionId = liveSessionIdRef.current;
-      if (
-        calledNumber == null ||
-        activeSessionId == null ||
-        !isCalledNumberForActiveSession(calledNumber, activeSessionId)
-      ) {
+      const decision = resolveNumberCalledRealtimeDecision(
+        payload,
+        liveSessionIdRef.current,
+      );
+
+      if (decision.type !== "apply") {
         return;
       }
 
-      logCalledNumberEvent(calledNumber);
-      applyRealtimeCalledNumber(queryClient, activeSessionId, calledNumber);
+      logCalledNumberEvent(decision.calledNumber);
+      applyRealtimeCalledNumber(
+        queryClient,
+        decision.calledNumber.gameSessionId,
+        decision.calledNumber,
+      );
 
-      const autoCallSchedule = parseAutoCallScheduleFromPayload(payload);
-      if (autoCallSchedule) {
+      if (decision.autoCallSchedule) {
         patchOperationsCache(queryClient, {
-          sessionId: activeSessionId,
-          ...autoCallSchedule,
+          sessionId: decision.calledNumber.gameSessionId,
+          ...decision.autoCallSchedule,
         });
         setAutoCallNow(Date.now());
       }
@@ -784,50 +835,35 @@ export function GameOperations() {
 
     const handleReconnectRefresh = () => {
       refetchCalledNumbersForSession(queryClient, liveSessionIdRef.current);
-      scheduleOperationsRefresh(true);
+      void refreshCurrentGameOperations(queryClient);
+      void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
     };
 
-    const handleStructuralRefresh = (payload: unknown) => {
-      // Legacy guard: API no longer emits operation_updated per ball (PR1).
-      if (
-        payload &&
-        typeof payload === "object" &&
-        "updatedReason" in payload
-      ) {
-        const reason = (payload as { updatedReason?: string }).updatedReason;
-        if (reason === "number_called") {
-          return;
-        }
+    const handleOperationUpdated = (payload: unknown) => {
+      const decision = resolveStructuralRefreshDecision(payload);
 
-        if (reason === "auto_call_changed") {
-          const data = payload as {
-            sessionId?: string | null;
-            slotId?: string | null;
-            autoCallEnabled?: boolean;
-            autoCallIntervalMs?: number | null;
-            nextAutoCallAt?: string | null;
-          };
-          patchOperationsCache(queryClient, {
-            sessionId: data.sessionId ?? undefined,
-            slotId: data.slotId ?? undefined,
-            autoCallEnabled: data.autoCallEnabled,
-            autoCallIntervalMs: data.autoCallIntervalMs,
-            nextAutoCallAt: data.nextAutoCallAt,
-          });
-          return;
-        }
-
-        if (reason === "queue_cleared") {
-          scheduleOperationsRefresh(true);
-          return;
-        }
+      if (decision.type === "ignore") {
+        return;
       }
 
-      // Immediate refresh for structural queue/ready/live changes (no debounce).
-      scheduleOperationsRefresh(true);
+      if (decision.type === "patchAutoCall") {
+        patchOperationsCache(queryClient, {
+          sessionId: decision.patch.sessionId,
+          slotId: decision.patch.slotId,
+          autoCallEnabled: decision.patch.autoCallEnabled,
+          autoCallIntervalMs: decision.patch.autoCallIntervalMs,
+          nextAutoCallAt: decision.patch.nextAutoCallAt,
+        });
+        return;
+      }
+
+      if (!patchOperationsFromCanonicalEvent(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
     };
 
-    const handleTerminalSession = (payload: unknown) => {
+    const handleTerminalSession = (payload: unknown, allowRecovery = false) => {
       if (payload && typeof payload === "object") {
         const data = payload as {
           sessionId?: string | null;
@@ -846,7 +882,7 @@ export function GameOperations() {
             (transitionLockTargetStatus === "FINISHED" && data.status == null) ||
             (transitionLockTargetStatus === "CANCELLED" && data.reason != null))
         ) {
-          unlockTransitionUi("socket_confirmed");
+          unlockTransitionUi();
         }
 
         if (data.status === "NO_WINNER") {
@@ -855,13 +891,15 @@ export function GameOperations() {
           );
         }
 
-        dropTerminalSessionFromOperationsCache(queryClient, {
+        patchOperationsForFinished(queryClient, {
           sessionId: data.sessionId ?? data.id ?? null,
           slotId: data.slotId ?? data.gameSlotId ?? null,
         });
       }
 
-      scheduleOperationsRefresh(true);
+      if (allowRecovery) {
+        scheduleOperationsRefresh(true);
+      }
     };
 
     const handleGameCancelled = (payload: unknown) => {
@@ -908,7 +946,7 @@ export function GameOperations() {
           sessionId === transitionLockSessionId &&
           status === transitionLockTargetStatus
         ) {
-          unlockTransitionUi("socket_confirmed");
+          unlockTransitionUi();
         } else {
           // Ignore stale status events that do not match the pending transition.
         }
@@ -919,41 +957,58 @@ export function GameOperations() {
         return;
       }
 
-      handleStructuralRefresh(payload);
+      if (!patchOperationsForStatusChanged(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
     };
 
-    socketService.on("connect", handleReconnectRefresh);
-    socketService.on("game:status_changed", handleStatusChanged);
-    socketService.on("game:operation_updated", handleStructuralRefresh);
-    socketService.on("game:number_called", handleNumberCalled);
-    socketService.on("game:bingo_claimed", handleStructuralRefresh);
-    socketService.on("game:winner_window_started", handleStructuralRefresh);
-    socketService.on("game:winner_window_joined", handleStructuralRefresh);
-    socketService.on("game:finished", handleTerminalSession);
-    socketService.on("game:cancelled", handleGameCancelled);
-    socketService.on("session:prize_updated", handleStructuralRefresh);
-    socketService.on("session:cartelas_updated", handleStructuralRefresh);
-    socketService.on("slot:status_changed", handleStructuralRefresh);
-    socketService.on("slot:entry_fee_updated", handleStructuralRefresh);
+    const handleWinnerWindow = (payload: unknown) => {
+      if (!patchOperationsForWinnerWindow(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
+    };
+
+    const handleRegistrationMetrics = (payload: unknown) => {
+      if (!patchOperationsForRegistration(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
+    };
+
+    const handleSlotUpdate = (payload: unknown) => {
+      if (!patchOperationsFromCanonicalEvent(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
+    };
+
+    const handleBingoClaimed = () => {
+      void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
+    };
+
+    const cleanupRealtimeListeners = registerGameOperationsRealtimeListeners(
+      socketService,
+      {
+        connect: handleReconnectRefresh,
+        gameStatusChanged: handleStatusChanged,
+        gameOperationUpdated: handleOperationUpdated,
+        gameNumberCalled: handleNumberCalled,
+        gameBingoClaimed: handleBingoClaimed,
+        gameWinnerWindowStarted: handleWinnerWindow,
+        gameWinnerWindowJoined: handleWinnerWindow,
+        gameFinished: handleTerminalSession,
+        gameCancelled: handleGameCancelled,
+        sessionPrizeUpdated: handleRegistrationMetrics,
+        sessionCartelasUpdated: handleRegistrationMetrics,
+        slotStatusChanged: handleSlotUpdate,
+        slotEntryFeeUpdated: handleSlotUpdate,
+      },
+    );
 
     return () => {
       if (invalidateDebounceRef.current) {
         clearTimeout(invalidateDebounceRef.current);
       }
 
-      socketService.off("connect", handleReconnectRefresh);
-      socketService.off("game:status_changed", handleStatusChanged);
-      socketService.off("game:operation_updated", handleStructuralRefresh);
-      socketService.off("game:number_called", handleNumberCalled);
-      socketService.off("game:bingo_claimed", handleStructuralRefresh);
-      socketService.off("game:winner_window_started", handleStructuralRefresh);
-      socketService.off("game:winner_window_joined", handleStructuralRefresh);
-      socketService.off("game:finished", handleTerminalSession);
-      socketService.off("game:cancelled", handleGameCancelled);
-      socketService.off("session:prize_updated", handleStructuralRefresh);
-      socketService.off("session:cartelas_updated", handleStructuralRefresh);
-      socketService.off("slot:status_changed", handleStructuralRefresh);
-      socketService.off("slot:entry_fee_updated", handleStructuralRefresh);
+      cleanupRealtimeListeners();
     };
   }, [
     queryClient,
@@ -1071,11 +1126,11 @@ export function GameOperations() {
       queryClient.setQueryData(operationsQueryKey, data.operations);
       const liveStatus = data.operations.liveGame?.playerStatus ?? null;
       if (liveStatus === "playing") {
-        unlockTransitionUi("command_snapshot");
+        unlockTransitionUi();
       }
     },
     onError: () => {
-      unlockTransitionUi("command_failed");
+      unlockTransitionUi();
     },
   });
 
@@ -1090,11 +1145,11 @@ export function GameOperations() {
         data.operations.checkingGame?.playerStatus ??
         null;
       if (currentStatus !== "playing" && currentStatus !== "checking") {
-        unlockTransitionUi("command_snapshot");
+        unlockTransitionUi();
       }
     },
     onError: () => {
-      unlockTransitionUi("command_failed");
+      unlockTransitionUi();
     },
   });
 
@@ -1107,11 +1162,11 @@ export function GameOperations() {
       queryClient.setQueryData(operationsQueryKey, data.operations);
       const liveStatus = data.operations.liveGame?.playerStatus ?? null;
       if (liveStatus !== "winnerWindow") {
-        unlockTransitionUi("command_snapshot");
+        unlockTransitionUi();
       }
     },
     onError: () => {
-      unlockTransitionUi("command_failed");
+      unlockTransitionUi();
     },
   });
 
@@ -1500,7 +1555,7 @@ export function GameOperations() {
         <p className="font-medium">Failed to load game operations</p>
         <p className="text-sm">{getApiErrorMessage(error)}</p>
         <Button
-          onClick={() => refetch()}
+          onClick={() => void refreshCurrentGameOperations(queryClient)}
           className="mt-2"
           variant="outline"
           size="sm"
@@ -1519,7 +1574,11 @@ export function GameOperations() {
           Game operations sync is temporarily paused. Please wait a moment and
           refresh.
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
+        <Button
+          onClick={() => void refreshCurrentGameOperations(queryClient)}
+          variant="outline"
+          size="sm"
+        >
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
@@ -1574,7 +1633,7 @@ export function GameOperations() {
             Next game is being prepared — tap Refresh if this stays stuck.
           </span>
           <Button
-            onClick={() => void refetch()}
+            onClick={() => void refreshCurrentGameOperations(queryClient)}
             variant="outline"
             size="sm"
             className="self-start"
@@ -1828,7 +1887,6 @@ export function GameOperations() {
                         lockTransitionUi(
                           currentGame.sessionId,
                           "FINISHED",
-                          "finish_winner_window",
                         );
                         finishWinnerWindow.mutate(currentGame.sessionId);
                       }}
@@ -2068,7 +2126,6 @@ export function GameOperations() {
                       lockTransitionUi(
                         sessionId,
                         "PLAYING",
-                        "start_game",
                       );
                       startGame.mutate(sessionId);
                     }}
@@ -3288,7 +3345,6 @@ export function GameOperations() {
           lockTransitionUi(
             currentGame.sessionId,
             "CANCELLED",
-            "cancel_ready_session",
           );
           cancelLiveSession.mutate(currentGame.sessionId);
         }}

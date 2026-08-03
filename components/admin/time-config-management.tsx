@@ -6,11 +6,11 @@ import { Clock3, Loader2 } from "lucide-react";
 
 import {
   getAdminTimeConfig,
-  getCurrentGameOperations,
   updateAdminSlotOperationMode,
   updateAdminTimeConfig,
   type GameOperationItem,
 } from "@/lib/api/admin";
+import { createCurrentGameOperationsQueryOptions } from "@/lib/admin/current-game-operations";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type {
   GameTimingConfig,
@@ -312,10 +312,7 @@ export function TimeConfigManagement() {
     invalidateQueryKeys: [timeConfigQueryKey],
   });
 
-  const operationsQuery = useQuery({
-    queryKey: operationsQueryKey,
-    queryFn: getCurrentGameOperations,
-  });
+  const operationsQuery = useQuery(createCurrentGameOperationsQueryOptions());
 
   const focusedGame = operationsQuery.data
     ? getFocusedGameForModeSwitch(operationsQuery.data)

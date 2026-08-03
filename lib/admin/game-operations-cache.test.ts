@@ -12,11 +12,15 @@ import {
   mergeCalledNumbersResponse,
   normalizeCalledNumberPayload,
   operationsQueryKey,
+  patchOperationsForFinished,
+  patchOperationsForRegistration,
+  patchOperationsForStatusChanged,
+  patchOperationsForWinnerWindow,
+  patchOperationsFromCanonicalEvent,
   parseAutoCallScheduleFromPayload,
   optimisticallyClearWaitingQueue,
   dedupeOperationQueue,
   getOperationItemKey,
-  patchOperationsCalledNumberCount,
   readLiveCalledNumbers,
   upsertCalledNumber,
 } from "./game-operations-cache";
@@ -48,6 +52,8 @@ function createOperationsState(): GameOperationsCurrentResponse {
       playerStatus: "playing",
       operationStatus: "live",
       gameRule: { id: "rule-1", name: "Auto", key: "AUTO" },
+      category: "NORMAL",
+      isBonus: false,
       entryFee: "10",
       prizePerCartela: "8",
       prizeAmount: "16",
@@ -219,6 +225,143 @@ describe("game-operations-cache", () => {
     });
     expect(liveCalledNumbers).toHaveLength(1);
     expect(liveCalledNumbers[0]?.number).toBe(42);
+  });
+
+  it("patches status_changed into the current live cache without a refetch", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...createOperationsState(),
+      registrationOpenGame: {
+        ...createOperationsState().liveGame!,
+        sessionId: "session-ready",
+        slotId: "slot-ready",
+        rawStatus: "READY",
+        playerStatus: "registrationOpen",
+        operationStatus: "registration",
+        playCode: "READY-1",
+        canRegister: true,
+        canCallNumber: false,
+      },
+      liveGame: null,
+    });
+
+    const patched = patchOperationsForStatusChanged(queryClient, {
+      sessionId: "session-ready",
+      gameSlotId: "slot-ready",
+      staticCode: "AUTO-R1",
+      playCode: "READY-1",
+      status: "PLAYING",
+      registrationOpen: false,
+      entryFee: "10",
+      prizePerCartela: "8",
+      prizeAmount: "16",
+      registeredCartelasCount: 2,
+      calledNumbersCount: 0,
+      gameSlot: { id: "slot-ready", sortOrder: 1 },
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.sessionId).toBe("session-ready");
+    expect(operations?.registrationOpenGame).toBeNull();
+  });
+
+  it("patches winner window payloads directly", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, createOperationsState());
+
+    const patched = patchOperationsForWinnerWindow(queryClient, {
+      sessionId: "session-1",
+      winnerWindowEndsAt: "2026-08-03T12:00:30.000Z",
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.playerStatus).toBe("winnerWindow");
+    expect(operations?.liveGame?.winnerWindowEndsAt).toBe(
+      "2026-08-03T12:00:30.000Z",
+    );
+  });
+
+  it("patches registration metrics directly from thin session updates", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, createOperationsState());
+
+    const patched = patchOperationsForRegistration(queryClient, {
+      sessionId: "session-1",
+      prizeAmount: "24",
+      registeredCartelasCount: 3,
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.prizeAmount).toBe("24");
+    expect(operations?.liveGame?.registeredCartelasCount).toBe(3);
+  });
+
+  it("drops terminal sessions immediately and lets paired canonical events refill structure", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, createOperationsState());
+
+    const patched = patchOperationsForFinished(queryClient, {
+      sessionId: "session-1",
+      slotId: "slot-1",
+      status: "FINISHED",
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame).toBeNull();
+  });
+
+  it("patches canonical slot updates without falling back to a REST refresh", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...createOperationsState(),
+      liveGame: null,
+      queue: [
+        {
+          ...createOperationsState().liveGame!,
+          slotId: "slot-queue",
+          sessionId: null,
+          playCode: null,
+          rawStatus: "NEXT",
+          playerStatus: "registrationOpen",
+          operationStatus: "queue",
+          canRegister: false,
+          canCallNumber: false,
+        },
+      ],
+    });
+
+    const patched = patchOperationsFromCanonicalEvent(queryClient, {
+      id: "slot-queue",
+      staticCode: "AUTO-Q1",
+      status: "READY",
+      entryFee: "12",
+      prizePerCartela: "9",
+      sortOrder: 3,
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.queue[0]?.rawStatus).toBe("READY");
+    expect(operations?.queue[0]?.entryFee).toBe("12");
   });
 
   it("uses separate cache keys per session", () => {
