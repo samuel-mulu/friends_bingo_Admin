@@ -364,6 +364,55 @@ describe("game-operations-cache", () => {
     expect(operations?.queue[0]?.entryFee).toBe("12");
   });
 
+  it("keeps winner window and checking slot updates in the current-game buckets", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, createOperationsState());
+
+    const winnerWindowPatched = patchOperationsFromCanonicalEvent(queryClient, {
+      id: "slot-1",
+      sessionId: "session-1",
+      staticCode: "AUTO-S1",
+      playCode: "BINGO-123",
+      status: "WINNER_WINDOW",
+      entryFee: "10",
+      prizePerCartela: "8",
+      prizeAmount: "16",
+      sortOrder: 1,
+    });
+
+    let operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(winnerWindowPatched).toBe(true);
+    expect(operations?.liveGame?.sessionId).toBe("session-1");
+    expect(operations?.liveGame?.playerStatus).toBe("winnerWindow");
+    expect(operations?.checkingGame).toBeNull();
+    expect(operations?.queue).toEqual([]);
+
+    const checkingPatched = patchOperationsFromCanonicalEvent(queryClient, {
+      id: "slot-1",
+      sessionId: "session-1",
+      staticCode: "AUTO-S1",
+      playCode: "BINGO-123",
+      status: "CHECKING",
+      entryFee: "10",
+      prizePerCartela: "8",
+      prizeAmount: "16",
+      sortOrder: 1,
+    });
+
+    operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(checkingPatched).toBe(true);
+    expect(operations?.liveGame).toBeNull();
+    expect(operations?.checkingGame?.sessionId).toBe("session-1");
+    expect(operations?.checkingGame?.playerStatus).toBe("checking");
+    expect(operations?.queue).toEqual([]);
+  });
+
   it("uses separate cache keys per session", () => {
     const queryClient = new QueryClient();
 

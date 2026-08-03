@@ -124,6 +124,40 @@ function getRealtimeStatusRank(status: string | null | undefined): number {
   return STATUS_PROGRESS_RANK[status] ?? Number.NEGATIVE_INFINITY;
 }
 
+function summarizeOperationItem(item: GameOperationItem | null | undefined) {
+  if (!item) {
+    return null;
+  }
+
+  return {
+    slotId: item.slotId,
+    sessionId: item.sessionId,
+    rawStatus: item.rawStatus,
+    playerStatus: item.playerStatus,
+    operationStatus: item.operationStatus,
+    playCode: item.playCode,
+    staticCode: item.staticCode,
+  };
+}
+
+function summarizeOperationsSnapshot(snapshot: GameOperationsCurrentResponse) {
+  return {
+    liveGame: summarizeOperationItem(snapshot.liveGame),
+    checkingGame: summarizeOperationItem(snapshot.checkingGame),
+    registrationOpenGame: summarizeOperationItem(snapshot.registrationOpenGame),
+    queue: snapshot.queue.map((item) => summarizeOperationItem(item)),
+    operationsState: snapshot.operationsState ?? null,
+  };
+}
+
+function logOperationsDebug(label: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  console.info(`[admin-games][cache] ${label}`, payload);
+}
+
 function isSyntheticCalledNumberId(id: string): boolean {
   return id.startsWith("socket-") || id.startsWith("optimistic-");
 }
@@ -389,8 +423,16 @@ function updateOperationsSnapshot(
 
   const next = updater(current);
   if (!next) {
+    logOperationsDebug("snapshot_skipped", {
+      previous: summarizeOperationsSnapshot(current),
+    });
     return false;
   }
+
+  logOperationsDebug("snapshot_updated", {
+    previous: summarizeOperationsSnapshot(current),
+    next: summarizeOperationsSnapshot(next),
+  });
 
   queryClient.setQueryData<GameOperationsCurrentResponse>(operationsQueryKey, {
     ...next,
@@ -447,6 +489,11 @@ function applyOperationItemToBucket(
   current: GameOperationsCurrentResponse,
   item: GameOperationItem,
 ): GameOperationsCurrentResponse {
+  logOperationsDebug("bucket_apply", {
+    target: summarizeOperationItem(item),
+    previous: summarizeOperationsSnapshot(current),
+  });
+
   const pruned = removeMatchingOperationItems(current, {
     sessionId: item.sessionId,
     slotId: item.slotId,
@@ -588,16 +635,24 @@ function mergeSlotOperationItem(
   payload: SlotRealtimePayload,
 ): GameOperationItem {
   const nextStatus = payload.status ?? base.rawStatus;
-  const operationStatus =
-    base.operationStatus === "registration" || nextStatus === "READY"
-      ? base.operationStatus
+  const nextSessionId =
+    payload.sessionId !== undefined ? payload.sessionId : base.sessionId;
+  const operationStatus = nextSessionId
+    ? nextStatus === "CHECKING"
+      ? "checking"
+      : nextStatus === "PLAYING" || nextStatus === "WINNER_WINDOW"
+        ? "live"
+        : nextStatus === "READY" && base.operationStatus === "registration"
+          ? "registration"
+          : "queue"
+    : nextStatus === "READY" && base.operationStatus === "registration"
+      ? "registration"
       : "queue";
 
   return {
     ...base,
     slotId: payload.slotId ?? payload.id ?? base.slotId,
-    sessionId:
-      payload.sessionId !== undefined ? payload.sessionId : base.sessionId,
+    sessionId: nextSessionId,
     staticCode: payload.staticCode ?? base.staticCode,
     playCode:
       payload.playCode !== undefined ? payload.playCode : base.playCode,
@@ -668,6 +723,17 @@ export function patchOperationsForStatusChanged(
       slotId: payload.gameSlotId ?? payload.gameSlot?.id ?? null,
     });
 
+    logOperationsDebug("status_changed", {
+      payload: {
+        sessionId: payload.sessionId ?? payload.id ?? null,
+        slotId: payload.gameSlotId ?? payload.gameSlot?.id ?? null,
+        status: payload.status ?? null,
+        registrationOpen: payload.registrationOpen ?? null,
+      },
+      existing: summarizeOperationItem(existing),
+      current: summarizeOperationsSnapshot(current),
+    });
+
     if (!existing) {
       return null;
     }
@@ -734,6 +800,18 @@ export function patchOperationsForWinnerWindow(
         typeof record.sessionId === "string" ? record.sessionId : undefined,
     });
 
+    logOperationsDebug("winner_window", {
+      payload: {
+        sessionId: record.sessionId,
+        winnerWindowEndsAt:
+          record.winnerWindowEndsAt == null
+            ? null
+            : String(record.winnerWindowEndsAt),
+      },
+      existing: summarizeOperationItem(existing),
+      current: summarizeOperationsSnapshot(current),
+    });
+
     if (!existing) {
       return null;
     }
@@ -782,9 +860,14 @@ export function patchOperationsForFinished(
     return false;
   }
 
-  return updateOperationsSnapshot(queryClient, (current) =>
-    removeMatchingOperationItems(current, { sessionId, slotId }),
-  );
+  return updateOperationsSnapshot(queryClient, (current) => {
+    logOperationsDebug("finished_or_removed", {
+      payload: { sessionId, slotId },
+      current: summarizeOperationsSnapshot(current),
+    });
+
+    return removeMatchingOperationItems(current, { sessionId, slotId });
+  });
 }
 
 export function patchOperationsFromCanonicalEvent(
@@ -804,6 +887,17 @@ export function patchOperationsFromCanonicalEvent(
     const existing = findMatchingOperationItem(current, {
       sessionId: payload.sessionId ?? null,
       slotId,
+    });
+
+    logOperationsDebug("canonical_slot_event", {
+      payload: {
+        slotId,
+        sessionId: payload.sessionId ?? null,
+        status: payload.status ?? null,
+        playCode: payload.playCode ?? null,
+      },
+      existing: summarizeOperationItem(existing),
+      current: summarizeOperationsSnapshot(current),
     });
 
     if (!existing || !slotId) {

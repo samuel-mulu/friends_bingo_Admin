@@ -195,6 +195,13 @@ import {
   resolveStructuralRefreshDecision,
 } from "@/lib/admin/game-operations-realtime";
 import { createOperationsFallbackController } from "@/lib/admin/operations-fallback-controller";
+import {
+  addWinnerWindowPreviewCartela,
+  clearWinnerWindowPreviewSession,
+  extractWinnerWindowPreviewCartela,
+  resolveWinnerWindowDisplay,
+  type WinnerWindowPreviewBySession,
+} from "@/lib/admin/winner-window-preview";
 import { adminToast } from "@/lib/admin/admin-toast";
 import { socketService } from "@/lib/socket/socket-service";
 import { Button } from "@/components/ui/button";
@@ -216,6 +223,14 @@ import {
 const FALLBACK_OPERATIONS_INVALIDATE_DEBOUNCE_MS = 2500;
 const timeConfigQueryKey = ["admin", "time-config"] as const;
 const bigGameQueryKey = ["admin", "big-game", "current"] as const;
+
+function logAdminGamesDebug(label: string, payload: Record<string, unknown>) {
+  if (process.env.NODE_ENV !== "development") {
+    return;
+  }
+
+  console.info(`[admin-games][page] ${label}`, payload);
+}
 
 export function GameOperations() {
   const queryClient = useQueryClient();
@@ -298,6 +313,8 @@ export function GameOperations() {
     string | null
   >(null);
   const [calledNumbersRevision, setCalledNumbersRevision] = useState(0);
+  const [winnerWindowPreviewBySession, setWinnerWindowPreviewBySession] =
+    useState<WinnerWindowPreviewBySession>({});
   const bumpCalledNumbersRevision = useCallback(() => {
     setCalledNumbersRevision((revision) => revision + 1);
   }, []);
@@ -392,11 +409,110 @@ export function GameOperations() {
   );
   const liveSessionIdRef = useRef(liveSessionId);
   const previousLiveSessionIdRef = useRef<string | null>(null);
+  const previousCurrentSessionIdRef = useRef<string | null>(null);
   const hiddenAtRef = useRef<number | null>(null);
   const disconnectedWhileHiddenRef = useRef(false);
   const queueSectionRef = useRef<HTMLDivElement | null>(null);
   const scrollToQueueAfterCreateRef = useRef(false);
   const lastCreateCategoryRef = useRef<GameCategory>("NORMAL");
+
+  const clearWinnerPreviewSession = useCallback(
+    (sessionId: string | null | undefined, reason: string) => {
+      if (!sessionId) {
+        return;
+      }
+
+      setWinnerWindowPreviewBySession((current) => {
+        const next = clearWinnerWindowPreviewSession(current, sessionId);
+        if (next !== current) {
+          logAdminGamesDebug("winner_preview_cleared", { sessionId, reason });
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    logAdminGamesDebug("snapshot", {
+      operationsState: operations?.operationsState ?? null,
+      liveGame: liveGame
+        ? {
+            sessionId: liveGame.sessionId,
+            slotId: liveGame.slotId,
+            rawStatus: liveGame.rawStatus,
+            playerStatus: liveGame.playerStatus,
+            operationStatus: liveGame.operationStatus,
+            playCode: liveGame.playCode,
+          }
+        : null,
+      checkingGame: checkingGame
+        ? {
+            sessionId: checkingGame.sessionId,
+            slotId: checkingGame.slotId,
+            rawStatus: checkingGame.rawStatus,
+            playerStatus: checkingGame.playerStatus,
+            operationStatus: checkingGame.operationStatus,
+            playCode: checkingGame.playCode,
+          }
+        : null,
+      currentGame: currentGame
+        ? {
+            sessionId: currentGame.sessionId,
+            slotId: currentGame.slotId,
+            rawStatus: currentGame.rawStatus,
+            playerStatus: currentGame.playerStatus,
+            operationStatus: currentGame.operationStatus,
+            playCode: currentGame.playCode,
+          }
+        : null,
+      registrationOpenGame: registrationOpenGame
+        ? {
+            sessionId: registrationOpenGame.sessionId,
+            slotId: registrationOpenGame.slotId,
+            rawStatus: registrationOpenGame.rawStatus,
+            playerStatus: registrationOpenGame.playerStatus,
+            operationStatus: registrationOpenGame.operationStatus,
+            playCode: registrationOpenGame.playCode,
+          }
+        : null,
+      queueSize: queue.length,
+      socketConnected,
+    });
+  }, [
+    checkingGame,
+    currentGame,
+    liveGame,
+    operations?.operationsState,
+    queue.length,
+    registrationOpenGame,
+    socketConnected,
+  ]);
+
+  useEffect(() => {
+    const previousCurrentSessionId = previousCurrentSessionIdRef.current;
+    if (
+      previousCurrentSessionId &&
+      previousCurrentSessionId !== currentSessionId
+    ) {
+      clearWinnerPreviewSession(previousCurrentSessionId, "session_changed");
+    }
+
+    previousCurrentSessionIdRef.current = currentSessionId;
+  }, [clearWinnerPreviewSession, currentSessionId]);
+
+  useEffect(() => {
+    if (
+      currentSessionId &&
+      (currentGame?.winnerPayoutsSummary?.length ?? 0) > 0
+    ) {
+      clearWinnerPreviewSession(currentSessionId, "canonical_summary_loaded");
+    }
+  }, [
+    clearWinnerPreviewSession,
+    currentGame?.winnerPayoutsSummary,
+    currentSessionId,
+  ]);
 
   const lockTransitionUi = useCallback(
     (sessionId: string, targetStatus: string) => {
@@ -634,6 +750,21 @@ export function GameOperations() {
       },
     ];
   }, [liveCalledNumbers, latestCalledNumber, liveSessionId]);
+  const currentWinnerPreview = useMemo(
+    () =>
+      currentSessionId == null
+        ? []
+        : (winnerWindowPreviewBySession[currentSessionId] ?? []),
+    [currentSessionId, winnerWindowPreviewBySession],
+  );
+  const winnerWindowDisplay = useMemo(
+    () =>
+      resolveWinnerWindowDisplay({
+        canonical: currentGame?.winnerPayoutsSummary,
+        preview: currentWinnerPreview,
+      }),
+    [currentGame?.winnerPayoutsSummary, currentWinnerPreview],
+  );
   const displayedCalledCount = useMemo(() => {
     if (liveCalledNumbers.length > 0) {
       const latestOrder = liveCalledNumbers.at(-1)?.order ?? 0;
@@ -834,6 +965,9 @@ export function GameOperations() {
     };
 
     const handleReconnectRefresh = () => {
+      logAdminGamesDebug("socket_connect_refresh", {
+        liveSessionId: liveSessionIdRef.current,
+      });
       refetchCalledNumbersForSession(queryClient, liveSessionIdRef.current);
       void refreshCurrentGameOperations(queryClient);
       void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
@@ -842,6 +976,10 @@ export function GameOperations() {
 
     const handleOperationUpdated = (payload: unknown) => {
       const decision = resolveStructuralRefreshDecision(payload);
+      logAdminGamesDebug("socket_game_operation_updated", {
+        decision: decision.type,
+        payload,
+      });
 
       if (decision.type === "ignore") {
         return;
@@ -864,6 +1002,10 @@ export function GameOperations() {
     };
 
     const handleTerminalSession = (payload: unknown, allowRecovery = false) => {
+      logAdminGamesDebug("socket_terminal_session", {
+        payload,
+        allowRecovery,
+      });
       if (payload && typeof payload === "object") {
         const data = payload as {
           sessionId?: string | null;
@@ -895,6 +1037,10 @@ export function GameOperations() {
           sessionId: data.sessionId ?? data.id ?? null,
           slotId: data.slotId ?? data.gameSlotId ?? null,
         });
+        clearWinnerPreviewSession(
+          data.sessionId ?? data.id ?? null,
+          "terminal_event",
+        );
       }
 
       if (allowRecovery) {
@@ -939,6 +1085,12 @@ export function GameOperations() {
             null)
           : null;
 
+      logAdminGamesDebug("socket_status_changed", {
+        sessionId,
+        status,
+        payload,
+      });
+
       if (transitionLocked) {
         if (
           transitionLockSessionId &&
@@ -963,18 +1115,36 @@ export function GameOperations() {
     };
 
     const handleWinnerWindow = (payload: unknown) => {
+      logAdminGamesDebug("socket_winner_window", { payload });
+      const previewCartela = extractWinnerWindowPreviewCartela(payload);
+      if (previewCartela) {
+        setWinnerWindowPreviewBySession((current) => {
+          const next = addWinnerWindowPreviewCartela(current, previewCartela);
+          if (next !== current) {
+            logAdminGamesDebug("winner_preview_added", {
+              sessionId: previewCartela.sessionId,
+              cartelaNumber: previewCartela.cartelaNumber,
+              claimId: previewCartela.claimId ?? null,
+              gameCartelaId: previewCartela.gameCartelaId ?? null,
+            });
+          }
+          return next;
+        });
+      }
       if (!patchOperationsForWinnerWindow(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
     };
 
     const handleRegistrationMetrics = (payload: unknown) => {
+      logAdminGamesDebug("socket_registration_metrics", { payload });
       if (!patchOperationsForRegistration(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
     };
 
     const handleSlotUpdate = (payload: unknown) => {
+      logAdminGamesDebug("socket_slot_update", { payload });
       if (!patchOperationsFromCanonicalEvent(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
@@ -1836,13 +2006,13 @@ export function GameOperations() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-medium">Winner window open</p>
-                    {(currentGame.winnerPayoutsSummary?.length ?? 0) > 0 ? (
+                    {winnerWindowDisplay.mode === "canonical" ? (
                       <div className="mt-3 space-y-1">
                         <p className="text-sm font-medium text-violet-900">
                           Winners per cartela
                         </p>
                         <div className="flex flex-wrap gap-2">
-                          {(currentGame.winnerPayoutsSummary ?? []).map(
+                          {winnerWindowDisplay.canonical.map(
                             (winner) => (
                               <Badge
                                 key={`${winner.cartelaId}-${winner.cartelaNumber}`}
@@ -1857,6 +2027,26 @@ export function GameOperations() {
                             ),
                           )}
                         </div>
+                      </div>
+                    ) : winnerWindowDisplay.mode === "preview" ? (
+                      <div className="mt-3 space-y-1">
+                        <p className="text-sm font-medium text-violet-900">
+                          Winner cartelas
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {winnerWindowDisplay.preview.map((winner) => (
+                            <Badge
+                              key={`${winner.sessionId}-${winner.claimId ?? winner.gameCartelaId ?? winner.cartelaNumber}`}
+                              variant="outline"
+                              className="border-violet-300 bg-white text-violet-900"
+                            >
+                              #{winner.cartelaNumber}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="text-xs text-violet-700">
+                          Waiting for payout summary.
+                        </p>
                       </div>
                     ) : (
                       <p className="mt-2 text-sm text-violet-800">
