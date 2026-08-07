@@ -157,6 +157,10 @@ export interface AdminPlayerGameCartela {
   blockedAt: string | null;
   blockReason: string | null;
   blockCheckedAt: string | null;
+  activeNumberWhenBlocked: {
+    letter: string;
+    number: number;
+  } | null;
   cartela: {
     id: string;
     number: number;

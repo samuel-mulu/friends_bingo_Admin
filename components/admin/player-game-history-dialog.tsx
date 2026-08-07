@@ -642,11 +642,12 @@ function PlayerCartelaBoardDialog({
                     Reason: {cartela.blockReason}
                   </div>
                 ) : null}
-                {orderedCalls.length > 0 ? (
+                {cartela.activeNumberWhenBlocked ? (
                   <div className="text-xs text-red-700">
                     Active number when blocked:{" "}
                     <span className="font-bold">
-                      {orderedCalls[0].letter}-{orderedCalls[0].number}
+                      {cartela.activeNumberWhenBlocked.letter}-
+                      {cartela.activeNumberWhenBlocked.number}
                     </span>
                   </div>
                 ) : null}

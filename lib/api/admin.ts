@@ -422,15 +422,35 @@ export function getSessionCalledNumbers(sessionId: string) {
   });
 }
 
+export type SessionRegisteredCartela = {
+  gameCartelaId: string;
+  cartelaId: string;
+  cartelaNumber: number;
+  status: string;
+  isWinner: boolean;
+  blockedAt: string | null;
+  blockReason: string | null;
+  blockCheckedAt: string | null;
+  activeNumberWhenBlocked: {
+    letter: string;
+    number: number;
+  } | null;
+  cartela: {
+    id: string;
+    number: number;
+    b: Array<number | string>;
+    i: Array<number | string>;
+    n: Array<number | string>;
+    g: Array<number | string>;
+    o: Array<number | string>;
+  };
+};
+
 export type SessionRegisteredPlayer = {
   userId: string;
   fullName: string;
   phoneNumber: string;
-  cartelas: Array<{
-    gameCartelaId: string;
-    cartelaNumber: number;
-    status: string;
-  }>;
+  cartelas: SessionRegisteredCartela[];
 };
 
 export type SessionRegisteredPlayersResponse = {
