@@ -34,6 +34,8 @@ import type {
   UpdateDepositApprovalConfigPayload,
   AppDisplayConfig,
   UpdateAppDisplayConfigPayload,
+  ChangeAdminPasswordPayload,
+  ChangeAdminPasswordResult,
   HouseChampionsQueryParams,
   HouseChampionsResponse,
   OverviewReport,
@@ -718,6 +720,14 @@ export function updateAdminDisplayConfig(payload: UpdateAppDisplayConfigPayload)
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
     method: "PATCH",
+    data: payload,
+  });
+}
+
+export function changeAdminPassword(payload: ChangeAdminPasswordPayload) {
+  return apiRequest<ChangeAdminPasswordResult>({
+    url: "/admin/change-password",
+    method: "POST",
     data: payload,
   });
 }

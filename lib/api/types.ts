@@ -360,6 +360,15 @@ export interface UpdateAppDisplayConfigPayload {
   showWinnerPhoneNumber: boolean;
 }
 
+export interface ChangeAdminPasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangeAdminPasswordResult {
+  message: string;
+}
+
 export interface AdminDeposit {
   id: string;
   userId: string;
