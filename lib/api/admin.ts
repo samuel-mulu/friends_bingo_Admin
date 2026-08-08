@@ -32,6 +32,8 @@ import type {
   GameTimingConfig,
   DepositApprovalConfig,
   UpdateDepositApprovalConfigPayload,
+  AppDisplayConfig,
+  UpdateAppDisplayConfigPayload,
   HouseChampionsQueryParams,
   HouseChampionsResponse,
   OverviewReport,
@@ -700,6 +702,21 @@ export function updateAdminDepositApprovalConfig(
 ) {
   return apiRequest<DepositApprovalConfig>({
     url: "/admin/deposit-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function getAdminDisplayConfig() {
+  return apiRequest<AppDisplayConfig>({
+    url: "/admin/display-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminDisplayConfig(payload: UpdateAppDisplayConfigPayload) {
+  return apiRequest<AppDisplayConfig>({
+    url: "/admin/display-config",
     method: "PATCH",
     data: payload,
   });

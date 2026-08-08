@@ -1,10 +1,5 @@
-import { PlaceholderPage } from "@/components/admin/placeholder-page";
+import { DisplayConfigManagement } from "@/components/admin/display-config-management";
 
 export default function SettingsPage() {
-  return (
-    <PlaceholderPage
-      title="Settings"
-      description="Coming soon."
-    />
-  );
+  return <DisplayConfigManagement />;
 }

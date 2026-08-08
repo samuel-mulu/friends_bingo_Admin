@@ -349,6 +349,17 @@ export interface UpdateDepositApprovalConfigPayload {
   }>;
 }
 
+export interface AppDisplayConfig {
+  id: string;
+  showWinnerPhoneNumber: boolean;
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface UpdateAppDisplayConfigPayload {
+  showWinnerPhoneNumber: boolean;
+}
+
 export interface AdminDeposit {
   id: string;
   userId: string;
