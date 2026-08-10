@@ -1,5 +1,19 @@
 "use client";
 
+export function resolveBrowserSocketBaseUrl(): string | null {
+  const configured = process.env.NEXT_PUBLIC_SOCKET_URL?.trim();
+
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:3002";
+  }
+
+  return null;
+}
+
 export type AdminRealtimeBootstrapAuthState = {
   isHydrated: boolean;
   isAuthenticated: boolean;

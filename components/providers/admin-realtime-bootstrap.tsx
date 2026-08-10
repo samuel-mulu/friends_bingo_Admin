@@ -5,11 +5,10 @@ import { useEffect, useState } from "react";
 import { useCookieAuth } from "@/lib/auth/cookie-provider";
 import {
   createAdminRealtimeBootstrap,
+  resolveBrowserSocketBaseUrl,
+  type AdminRealtimeBootstrapController,
 } from "@/lib/socket/admin-realtime-bootstrap";
 import { socketService } from "@/lib/socket/socket-service";
-
-const socketBaseUrl =
-  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:3002";
 
 async function fetchRealtimeToken(options?: {
   forceRefresh?: boolean;
@@ -32,24 +31,43 @@ async function fetchRealtimeToken(options?: {
   return payload.success ? payload.data?.token?.trim() ?? null : null;
 }
 
+function createBootstrapController(): AdminRealtimeBootstrapController | null {
+  const socketBaseUrl = resolveBrowserSocketBaseUrl();
+
+  if (!socketBaseUrl) {
+    console.error(
+      "[AdminRealtime] NEXT_PUBLIC_SOCKET_URL is required in production; socket remains disconnected.",
+    );
+    return null;
+  }
+
+  return createAdminRealtimeBootstrap({
+    socketBaseUrl,
+    fetchRealtimeToken,
+    connect: (url, token) => socketService.connect(url, token),
+    disconnect: () => socketService.disconnect(),
+    on: (event, handler) => socketService.on(event, handler),
+    off: (event, handler) => socketService.off(event, handler),
+  });
+}
+
 export function AdminRealtimeBootstrap() {
   const { isHydrated, isAuthenticated } = useCookieAuth();
-  const [controller] = useState(() =>
-    createAdminRealtimeBootstrap({
-      socketBaseUrl,
-      fetchRealtimeToken,
-      connect: (url, token) => socketService.connect(url, token),
-      disconnect: () => socketService.disconnect(),
-      on: (event, handler) => socketService.on(event, handler),
-      off: (event, handler) => socketService.off(event, handler),
-    }),
-  );
+  const [controller] = useState(createBootstrapController);
 
   useEffect(() => {
+    if (!controller) {
+      return;
+    }
+
     controller.syncAuth({ isHydrated, isAuthenticated });
   }, [controller, isAuthenticated, isHydrated]);
 
   useEffect(() => {
+    if (!controller) {
+      return;
+    }
+
     return () => {
       controller.dispose();
     };
