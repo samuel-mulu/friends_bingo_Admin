@@ -7,6 +7,7 @@ import {
   Copy,
   Eye,
   History,
+  MessageSquare,
   ReceiptText,
   Search,
   Smartphone,
@@ -30,6 +31,7 @@ import {
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
 import { PlayerGameHistoryDialog } from "@/components/admin/player-game-history-dialog";
+import { PlayerSendFeedbackDialog } from "@/components/admin/player-send-feedback-dialog";
 import { PlayerTransactionHistoryDialog } from "@/components/admin/player-transaction-history-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -89,6 +91,10 @@ export function PlayersManagement() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [gameHistoryOpen, setGameHistoryOpen] = useState(false);
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
+  const [feedbackTarget, setFeedbackTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [selectedPhoneIds, setSelectedPhoneIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -403,14 +409,29 @@ export function PlayersManagement() {
                       </TableCell>
                       <TableCell>{formatDateTime(user.createdAt)}</TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedUserId(user.id)}
-                        >
-                          <Eye className="size-4" />
-                          View
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setFeedbackTarget({
+                                id: user.id,
+                                name: user.fullName,
+                              })
+                            }
+                          >
+                            <MessageSquare className="size-4" />
+                            Send
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedUserId(user.id)}
+                          >
+                            <Eye className="size-4" />
+                            View
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -551,6 +572,19 @@ export function PlayersManagement() {
                   <Button
                     type="button"
                     variant="outline"
+                    onClick={() =>
+                      setFeedbackTarget({
+                        id: userDetailQuery.data.id,
+                        name: userDetailQuery.data.fullName,
+                      })
+                    }
+                  >
+                    <MessageSquare className="size-4" />
+                    Send
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
                     onClick={() => setGameHistoryOpen(true)}
                   >
                     <History className="size-4" />
@@ -571,6 +605,16 @@ export function PlayersManagement() {
         </SheetContent>
       </Sheet>
 
+      <PlayerSendFeedbackDialog
+        userId={feedbackTarget?.id ?? null}
+        playerName={feedbackTarget?.name}
+        open={Boolean(feedbackTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFeedbackTarget(null);
+          }
+        }}
+      />
       <PlayerGameHistoryDialog
         userId={selectedUserId}
         playerName={userDetailQuery.data?.fullName}

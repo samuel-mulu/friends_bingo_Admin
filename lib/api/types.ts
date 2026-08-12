@@ -754,6 +754,12 @@ export interface ReplySupportMessagePayload {
   status?: PlayerSupportStatus;
 }
 
+export interface CreateAdminSupportMessagePayload {
+  userId: string;
+  adminReply: string;
+  category?: PlayerSupportCategory;
+}
+
 export type LeaderboardPeriod =
   | "today"
   | "week"

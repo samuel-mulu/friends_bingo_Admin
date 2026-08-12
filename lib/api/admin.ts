@@ -43,6 +43,7 @@ import type {
   PlayerSupportMessage,
   PlayerSupportStatus,
   ReplySupportMessagePayload,
+  CreateAdminSupportMessagePayload,
   ReportDateRangeParams,
   UpdateGameStatusPayload,
   UpdateGameTimingConfigPayload,
@@ -799,6 +800,16 @@ export function replyToSupportMessage(
   return apiRequest<PlayerSupportMessage>({
     url: `/admin/support/messages/${id}`,
     method: "PATCH",
+    data: payload,
+  });
+}
+
+export function createAdminSupportMessage(
+  payload: CreateAdminSupportMessagePayload,
+) {
+  return apiRequest<PlayerSupportMessage>({
+    url: "/admin/support/messages",
+    method: "POST",
     data: payload,
   });
 }
