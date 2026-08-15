@@ -11,6 +11,7 @@ import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
+import { SlashedZeroText } from "@/components/admin/slashed-zero-text";
 import { AdminTableSkeleton } from "@/components/admin/admin-table-skeleton";
 import {
   AdminEmptyState,
@@ -424,8 +425,8 @@ export function DepositsManagement() {
                         </TableCell>
                         <TableCell>{providerLabel}</TableCell>
                         <TableCell>
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {deposit.transactionRef}
+                          <span className="font-sans text-sm tracking-wide text-foreground">
+                            <SlashedZeroText value={deposit.transactionRef} />
                           </span>
                         </TableCell>
                         <TableCell>

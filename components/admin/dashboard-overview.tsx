@@ -168,7 +168,7 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
         <MetricCard
           title="Net Today"
           value={formatCurrency(overview.netToday)}
-          description="All entries (money + bonus) minus prizes"
+          description="Real-money game entries minus prize payouts"
           icon={Coins}
           emphasize
         />

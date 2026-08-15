@@ -130,3 +130,21 @@
     @apply font-sans;
   }
 }
+
+.slashed-zero {
+  position: relative;
+  display: inline-block;
+}
+
+.slashed-zero::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  width: 0.065em;
+  height: 44%;
+  background: currentColor;
+  border-radius: 999px;
+  transform: translateX(-50%) rotate(-28deg);
+  pointer-events: none;
+}
