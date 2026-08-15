@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, RotateCcw, Search, XCircle } from "lucide-react";
+import { CheckCircle2, MessageSquare, RotateCcw, Search, XCircle } from "lucide-react";
 
 import { approveDeposit, getAdminDeposits, rejectDeposit } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type { AdminDeposit, AdminDepositProviderOption, DepositStatus, PaymentProvider } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { PlayerSendFeedbackDialog } from "@/components/admin/player-send-feedback-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
 import { AdminStatusBadge } from "@/components/admin/admin-status-badge";
 import { SlashedZeroText } from "@/components/admin/slashed-zero-text";
@@ -116,6 +117,10 @@ export function DepositsManagement() {
   const [toDate, setToDate] = useState("");
   const [approveTarget, setApproveTarget] = useState<AdminDeposit | null>(null);
   const [rejectTarget, setRejectTarget] = useState<AdminDeposit | null>(null);
+  const [feedbackTarget, setFeedbackTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [providerOptions, setProviderOptions] = useState<
     AdminDepositProviderOption[]
   >([]);
@@ -492,28 +497,41 @@ export function DepositsManagement() {
                         </TableCell>
                         <TableCell>{formatDateTime(deposit.createdAt)}</TableCell>
                         <TableCell className="text-right">
-                          {canReview ? (
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setApproveTarget(deposit)}
-                              >
-                                <CheckCircle2 className="size-4" />
-                                Approve
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => setRejectTarget(deposit)}
-                              >
-                                <XCircle className="size-4" />
-                                Reject
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">—</span>
-                          )}
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setFeedbackTarget({
+                                  id: deposit.userId,
+                                  name: deposit.user.fullName,
+                                })
+                              }
+                            >
+                              <MessageSquare className="size-4" />
+                              Send
+                            </Button>
+                            {canReview ? (
+                              <>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setApproveTarget(deposit)}
+                                >
+                                  <CheckCircle2 className="size-4" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => setRejectTarget(deposit)}
+                                >
+                                  <XCircle className="size-4" />
+                                  Reject
+                                </Button>
+                              </>
+                            ) : null}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -595,6 +613,17 @@ export function DepositsManagement() {
           });
         }}
         isPending={rejectMutation.isPending}
+      />
+
+      <PlayerSendFeedbackDialog
+        userId={feedbackTarget?.id ?? null}
+        playerName={feedbackTarget?.name}
+        open={Boolean(feedbackTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFeedbackTarget(null);
+          }
+        }}
       />
     </div>
   );
