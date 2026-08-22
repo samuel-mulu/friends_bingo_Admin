@@ -73,6 +73,7 @@ export interface OverviewReport {
   withdrawalsTodayTotal: string;
   gameEntryTodayTotal: string;
   prizePaidTodayTotal: string;
+  bonusGamePrizePaidTodayTotal: string;
   netToday: string;
   bonusCartelasUsedToday: number;
 }
@@ -572,6 +573,7 @@ export interface FinancialDailyTotal {
   withdrawalsTotal: string;
   gameEntryTotal: string;
   prizePaidTotal: string;
+  bonusGamePrizePaidTotal: string;
   netRevenue: string;
   companyFeeTotal: string;
   expensesTotal: string;
@@ -583,6 +585,7 @@ export interface FinancialReport {
   withdrawalsTotal: string;
   gameEntryTotal: string;
   prizePaidTotal: string;
+  bonusGamePrizePaidTotal: string;
   netRevenue: string;
   registeredCartelasCount: number;
   companyFeeTotal: string;

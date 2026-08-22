@@ -547,7 +547,13 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Prize Paid Total"
               value={formatCurrency(financialQuery.data.prizePaidTotal)}
-              description="Prize credits paid to winners"
+              description="All prize credits paid to winners"
+              icon={<Trophy className="size-5" />}
+            />
+            <ReportMetricCard
+              title="Bonus Game Prizes"
+              value={formatCurrency(financialQuery.data.bonusGamePrizePaidTotal)}
+              description="Promotional prize cost from free bonus-category games (included in net revenue)"
               icon={<Trophy className="size-5" />}
             />
             <ReportMetricCard
@@ -559,13 +565,13 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Net Revenue"
               value={formatCurrency(financialQuery.data.netRevenue)}
-              description="Real-money game entries minus prize payouts"
+              description="Real-money game entries minus all prizes paid (bonus games have no entry income)"
               icon={<Coins className="size-5" />}
             />
             <ReportMetricCard
               title="Profit Net"
               value={formatCurrency(financialQuery.data.profitNet)}
-              description="Company fee total minus expenses"
+              description="Company fees minus expenses and bonus game prizes"
               icon={<Scale className="size-5" />}
               emphasize
             />

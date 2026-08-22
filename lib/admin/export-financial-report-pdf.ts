@@ -127,8 +127,12 @@ export function exportFinancialReportPdf(input: FinancialReportPdfInput) {
       ["Bonus entry value", formatCurrency(report.bonusEntryValueTotal)],
       ["Game entry total", formatCurrency(report.gameEntryTotal)],
       ["Prize paid total", formatCurrency(report.prizePaidTotal)],
+      ["Bonus game prizes", formatCurrency(report.bonusGamePrizePaidTotal)],
       ["Expenses total", formatCurrency(report.expensesTotal)],
-      ["Net revenue (money entries − prizes)", formatCurrency(report.netRevenue)],
+      [
+        "Net revenue (money entries − all prizes)",
+        formatCurrency(report.netRevenue),
+      ],
       ["Profit net", formatCurrency(report.profitNet)],
       ["Transaction count", String(report.transactionCount)],
       ["Registered cartelas", String(report.registeredCartelasCount)],
