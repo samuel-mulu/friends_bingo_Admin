@@ -363,6 +363,17 @@ export interface UpdateAppDisplayConfigPayload {
   winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
 }
 
+export interface NotificationConfig {
+  id: string;
+  pushNotificationsEnabled: boolean;
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface UpdateNotificationConfigPayload {
+  pushNotificationsEnabled: boolean;
+}
+
 export interface ChangeAdminPasswordPayload {
   currentPassword: string;
   newPassword: string;

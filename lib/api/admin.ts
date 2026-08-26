@@ -34,6 +34,8 @@ import type {
   UpdateDepositApprovalConfigPayload,
   AppDisplayConfig,
   UpdateAppDisplayConfigPayload,
+  NotificationConfig,
+  UpdateNotificationConfigPayload,
   ChangeAdminPasswordPayload,
   ChangeAdminPasswordResult,
   HouseChampionsQueryParams,
@@ -737,6 +739,23 @@ export function getAdminDisplayConfig() {
 export function updateAdminDisplayConfig(payload: UpdateAppDisplayConfigPayload) {
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function getAdminNotificationConfig() {
+  return apiRequest<NotificationConfig>({
+    url: "/admin/notification-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminNotificationConfig(
+  payload: UpdateNotificationConfigPayload,
+) {
+  return apiRequest<NotificationConfig>({
+    url: "/admin/notification-config",
     method: "PATCH",
     data: payload,
   });
