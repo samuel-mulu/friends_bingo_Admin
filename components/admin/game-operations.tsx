@@ -71,6 +71,7 @@ import {
   getAdminBingoClaims,
   getAdminGameRules,
   getAdminTimeConfig,
+  updateAdminTimeConfig,
   getCurrentBigGame,
   getGameCalledNumbers,
   getSessionRegisteredPlayers,
@@ -138,6 +139,115 @@ function isBigGotdOperationItem(
 ): boolean {
   return item?.category === "BIG_GOTD";
 }
+
+function isNormalOperationItem(
+  item: Pick<GameOperationItem, "category"> | null | undefined,
+): boolean {
+  return item?.category === "NORMAL";
+}
+
+function computePrizePerCartelaFromEconomics(
+  entryFee: string,
+  commission: string,
+): string {
+  const entry = Number(entryFee);
+  const fee = Number(commission);
+  if (!Number.isFinite(entry) || !Number.isFinite(fee)) {
+    return "0";
+  }
+  const prize = entry - fee;
+  return prize >= 0 ? prize.toFixed(2).replace(/\.00$/, "") : "0";
+}
+
+function resolveCompanyFeePerCartela(game: GameOperationItem): string {
+  if (game.companyFeePerCartela) {
+    return game.companyFeePerCartela;
+  }
+
+  const entry = Number(game.entryFee);
+  const prize = Number(game.prizePerCartela);
+  if (!Number.isFinite(entry) || !Number.isFinite(prize)) {
+    return "0";
+  }
+
+  const commission = entry - prize;
+  return commission >= 0
+    ? commission.toFixed(2).replace(/\.00$/, "")
+    : "0";
+}
+
+const FALLBACK_NORMAL_ENTRY_FEE = "10";
+const FALLBACK_NORMAL_COMMISSION = "2";
+
+function resolveNormalEconomicsFromTimeConfig(
+  timeConfig:
+    | {
+        normalDefaultEntryFee?: string;
+        normalDefaultCompanyFeePerCartela?: string;
+      }
+    | null
+    | undefined,
+) {
+  const entryFee = timeConfig?.normalDefaultEntryFee ?? FALLBACK_NORMAL_ENTRY_FEE;
+  const companyFeePerCartela =
+    timeConfig?.normalDefaultCompanyFeePerCartela ?? FALLBACK_NORMAL_COMMISSION;
+
+  return {
+    entryFee,
+    companyFeePerCartela,
+    prizePerCartela: computePrizePerCartelaFromEconomics(
+      entryFee,
+      companyFeePerCartela,
+    ),
+  };
+}
+
+function validateNormalEconomicsDraft(
+  entryFee: string,
+  companyFeePerCartela: string,
+): string | null {
+  const entryRaw = entryFee.trim();
+  const commissionRaw = companyFeePerCartela.trim();
+
+  if (!entryRaw || !commissionRaw) {
+    return "Entry fee and commission are required.";
+  }
+
+  if (!/^\d+(\.\d{1,2})?$/.test(entryRaw)) {
+    return "Entry fee must be a valid amount.";
+  }
+
+  if (!/^\d+(\.\d{1,2})?$/.test(commissionRaw)) {
+    return "Commission must be a valid amount.";
+  }
+
+  const entry = Number(entryRaw);
+  const commission = Number(commissionRaw);
+
+  if (entry < 1 || entry > 999) {
+    return "Entry fee must be between 1 and 999 ETB.";
+  }
+
+  if (commission < 0) {
+    return "Commission must be at least 0 ETB.";
+  }
+
+  if (entry - commission < 1) {
+    return "Prize per cartela must be at least 1 ETB.";
+  }
+
+  return null;
+}
+
+type CreateGameMutationVariables = {
+  payload: CreateGamePayload;
+  normalEconomics?: {
+    entryFee: string;
+    companyFeePerCartela: string;
+    baselineEntryFee: string;
+    baselineCompanyFeePerCartela: string;
+  };
+};
 
 /** Full-card tint for Bonus / Big GOTD (not just the badge). */
 function getCategorySurfaceClassName(
@@ -257,6 +367,13 @@ export function GameOperations() {
     useState("");
   const [bigGamePlayStartAt, setBigGamePlayStartAt] = useState("");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
+  const [normalEntryFeeDraft, setNormalEntryFeeDraft] = useState(
+    FALLBACK_NORMAL_ENTRY_FEE,
+  );
+  const [normalCommissionDraft, setNormalCommissionDraft] = useState(
+    FALLBACK_NORMAL_COMMISSION,
+  );
+  const normalEconomicsInitializedRef = useRef(false);
   const [defaultOperationMode, setDefaultOperationMode] =
     useState<GameOperationMode>("MANUAL");
   const [pendingOperationModeSwitch, setPendingOperationModeSwitch] = useState<{
@@ -319,7 +436,7 @@ export function GameOperations() {
     setCalledNumbersRevision((revision) => revision + 1);
   }, []);
 
-  const { data: timeConfig } = useQuery({
+  const { data: timeConfig, refetch: refetchTimeConfig } = useQuery({
     queryKey: timeConfigQueryKey,
     queryFn: getAdminTimeConfig,
     staleTime: 30_000,
@@ -879,6 +996,30 @@ export function GameOperations() {
   const activeGameRules = gameRules.filter((rule) => rule.isActive !== false);
 
   useEffect(() => {
+    if (!isCreateGameModalOpen) {
+      return;
+    }
+
+    void refetchTimeConfig();
+  }, [isCreateGameModalOpen, refetchTimeConfig]);
+
+  useEffect(() => {
+    if (!isCreateGameModalOpen) {
+      normalEconomicsInitializedRef.current = false;
+      return;
+    }
+
+    if (!timeConfig || normalEconomicsInitializedRef.current) {
+      return;
+    }
+
+    const economics = resolveNormalEconomicsFromTimeConfig(timeConfig);
+    setNormalEntryFeeDraft(economics.entryFee);
+    setNormalCommissionDraft(economics.companyFeePerCartela);
+    normalEconomicsInitializedRef.current = true;
+  }, [isCreateGameModalOpen, timeConfig]);
+
+  useEffect(() => {
     if (!isCreateGameModalOpen || activeGameRules.length === 0) {
       return;
     }
@@ -1257,8 +1398,26 @@ export function GameOperations() {
   });
 
   const createGame = useAdminMutation({
-    mutationFn: (payload: CreateGamePayload) =>
-      createAdminGame(buildCreateGameRequestBody(payload)),
+    mutationFn: async ({ payload, normalEconomics }: CreateGameMutationVariables) => {
+      if (normalEconomics) {
+        const entryFee = normalEconomics.entryFee.trim();
+        const companyFeePerCartela = normalEconomics.companyFeePerCartela.trim();
+        const economicsChanged =
+          entryFee !== normalEconomics.baselineEntryFee.trim() ||
+          companyFeePerCartela !==
+            normalEconomics.baselineCompanyFeePerCartela.trim();
+
+        if (economicsChanged) {
+          const updatedTimeConfig = await updateAdminTimeConfig({
+            normalDefaultEntryFee: entryFee,
+            normalDefaultCompanyFeePerCartela: companyFeePerCartela,
+          });
+          queryClient.setQueryData(timeConfigQueryKey, updatedTimeConfig);
+        }
+      }
+
+      return createAdminGame(buildCreateGameRequestBody(payload));
+    },
     errorMessage: "Could not add the game to the queue.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
@@ -1273,6 +1432,7 @@ export function GameOperations() {
       if (data.operations) {
         queryClient.setQueryData(operationsQueryKey, data.operations);
       }
+      void queryClient.invalidateQueries({ queryKey: timeConfigQueryKey });
       scheduleOperationsRefresh(true);
     },
     onError: (error) => {
@@ -2356,19 +2516,63 @@ export function GameOperations() {
             </p>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 md:grid-cols-3">
-              <RegistrationStatCard
-                label={
-                  standardRegistrationOpenGame.isBonus
-                    ? "Bonus Entry"
-                    : "Entry Fee"
-                }
-                value={
-                  standardRegistrationOpenGame.isBonus ? (
+            <div
+              className={cn(
+                "grid gap-3",
+                isNormalOperationItem(standardRegistrationOpenGame)
+                  ? "md:grid-cols-2 xl:grid-cols-5"
+                  : "md:grid-cols-3",
+              )}
+            >
+              {standardRegistrationOpenGame.isBonus ? (
+                <RegistrationStatCard
+                  label="Bonus Entry"
+                  value={
                     <span className="text-2xl font-bold text-emerald-700">
                       Free
                     </span>
-                  ) : (
+                  }
+                  hint="Free bonus registration"
+                />
+              ) : isNormalOperationItem(standardRegistrationOpenGame) ? (
+                <>
+                  <RegistrationStatCard
+                    label="Entry Fee"
+                    value={
+                      <span className="text-2xl font-bold text-blue-700">
+                        {formatCurrency(standardRegistrationOpenGame.entryFee)}
+                      </span>
+                    }
+                    hint="Set from Time Config when the game was added"
+                  />
+                  <RegistrationStatCard
+                    label="Commission"
+                    value={
+                      <span className="text-2xl font-bold text-blue-700">
+                        {formatCurrency(
+                          resolveCompanyFeePerCartela(
+                            standardRegistrationOpenGame,
+                          ),
+                        )}
+                      </span>
+                    }
+                  />
+                  <RegistrationStatCard
+                    label="Prize / Cartela"
+                    value={
+                      <span className="text-2xl font-bold text-blue-700">
+                        {formatCurrency(
+                          standardRegistrationOpenGame.prizePerCartela,
+                        )}
+                      </span>
+                    }
+                    hint="Entry minus commission"
+                  />
+                </>
+              ) : (
+                <RegistrationStatCard
+                  label="Entry Fee"
+                  value={
                     <EntryFeeEditor
                       slotId={standardRegistrationOpenGame.slotId}
                       currentFee={standardRegistrationOpenGame.entryFee}
@@ -2405,21 +2609,18 @@ export function GameOperations() {
                         });
                       }}
                     />
-                  )
-                }
-                hint={
-                  standardRegistrationOpenGame.isBonus
-                    ? "Free bonus registration"
-                    : selectedGameForEdit ===
-                        standardRegistrationOpenGame.slotId
+                  }
+                  hint={
+                    selectedGameForEdit === standardRegistrationOpenGame.slotId
                       ? "Minimum 8 ETB"
                       : canEditEntryFee(
                             standardRegistrationOpenGame.registeredCartelasCount,
                           )
                         ? "Click Edit to change"
                         : "Locked after first registration"
-                }
-              />
+                  }
+                />
+              )}
               <RegistrationStatCard
                 label="Prize Pool"
                 value={
@@ -2821,8 +3022,18 @@ export function GameOperations() {
                           </div>
                           <p className="text-sm text-muted-foreground">
                             {game.staticCode} • Entry:{" "}
-                            {formatCurrency(game.entryFee)} • Prize:{" "}
-                            {formatCurrency(game.prizeAmount)}
+                            {formatCurrency(game.entryFee)}
+                            {isNormalOperationItem(game) ? (
+                              <>
+                                {" "}
+                                • Commission:{" "}
+                                {formatCurrency(
+                                  game.companyFeePerCartela ??
+                                    resolveCompanyFeePerCartela(game),
+                                )}
+                              </>
+                            ) : null}{" "}
+                            • Prize: {formatCurrency(game.prizeAmount)}
                           </p>
                         </div>
                       </div>
@@ -2899,7 +3110,7 @@ export function GameOperations() {
                   ? "Create a paid fixed-prize Big GOTD round. Added at the end of the standard queue; removed after it finishes or is cancelled."
                   : createGameCategory === "BONUS"
                     ? "Create a free fixed-prize bonus round. Added at the end of the queue; removed after it finishes or is cancelled."
-                    : "Choose a game type and active rule. New games are added at the end of the queue."}
+                    : "Choose a game type and active rule. Normal game economics start from Time Config and update it when you add the game."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2998,6 +3209,19 @@ export function GameOperations() {
                   />
                 </div>
               </div>
+            ) : null}
+
+            {createGameCategory === "NORMAL" ? (
+              <NormalEconomicsEditor
+                entryFee={normalEntryFeeDraft}
+                companyFeePerCartela={normalCommissionDraft}
+                prizePerCartela={computePrizePerCartelaFromEconomics(
+                  normalEntryFeeDraft,
+                  normalCommissionDraft,
+                )}
+                onEntryFeeChange={setNormalEntryFeeDraft}
+                onCommissionChange={setNormalCommissionDraft}
+              />
             ) : null}
 
             {createGameCategory === "BIG_GAME" ? (
@@ -3165,15 +3389,28 @@ export function GameOperations() {
 
                   lastCreateCategoryRef.current = "BIG_GAME";
                   createGame.mutate({
-                    gameRuleId: selectedRuleId,
-                    category: "BIG_GAME",
-                    entryFee: bigGameEntryFee.trim(),
-                    fixedPrizeAmount: bigGameFixedPrizeAmount.trim(),
-                    maxCartelasPerPlayer: maxCartelas,
-                    registrationOpensAt,
-                    playStartAt,
+                    payload: {
+                      gameRuleId: selectedRuleId,
+                      category: "BIG_GAME",
+                      entryFee: bigGameEntryFee.trim(),
+                      fixedPrizeAmount: bigGameFixedPrizeAmount.trim(),
+                      maxCartelasPerPlayer: maxCartelas,
+                      registrationOpensAt,
+                      playStartAt,
+                    },
                   });
                   return;
+                }
+
+                if (createGameCategory === "NORMAL") {
+                  const economicsError = validateNormalEconomicsDraft(
+                    normalEntryFeeDraft,
+                    normalCommissionDraft,
+                  );
+                  if (economicsError) {
+                    setCreateGameError(economicsError);
+                    return;
+                  }
                 }
 
                 const defaults = getCreateFormDefaults(
@@ -3181,29 +3418,45 @@ export function GameOperations() {
                   timeConfig,
                 );
 
+                const baselineEconomics =
+                  resolveNormalEconomicsFromTimeConfig(timeConfig);
+
                 lastCreateCategoryRef.current = createGameCategory;
                 createGame.mutate({
-                  gameRuleId: selectedRuleId,
-                  category: createGameCategory,
-                  ...(createGameCategory === "BONUS" ||
-                  createGameCategory === "BIG_GOTD"
+                  payload: {
+                    gameRuleId: selectedRuleId,
+                    category: createGameCategory,
+                    ...(createGameCategory === "BONUS" ||
+                    createGameCategory === "BIG_GOTD"
+                      ? {
+                          ...(createGameCategory === "BIG_GOTD"
+                            ? { entryFee: bigGotdEntryFee.trim() }
+                            : {}),
+                          fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
+                          maxCartelasPerPlayer: Number(bonusMaxCartelasPerPlayer),
+                        }
+                      : {}),
+                    operationMode: defaults.operationMode,
+                    ...(defaults.operationMode === "AUTO"
+                      ? {
+                          registrationDurationSeconds: Number(
+                            defaults.registrationDurationSeconds,
+                          ),
+                          autoCallIntervalSeconds: Number(
+                            defaults.autoCallIntervalSeconds,
+                          ),
+                        }
+                      : {}),
+                  },
+                  ...(createGameCategory === "NORMAL"
                     ? {
-                        ...(createGameCategory === "BIG_GOTD"
-                          ? { entryFee: bigGotdEntryFee.trim() }
-                          : {}),
-                        fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
-                        maxCartelasPerPlayer: Number(bonusMaxCartelasPerPlayer),
-                      }
-                    : {}),
-                  operationMode: defaults.operationMode,
-                  ...(defaults.operationMode === "AUTO"
-                    ? {
-                        registrationDurationSeconds: Number(
-                          defaults.registrationDurationSeconds,
-                        ),
-                        autoCallIntervalSeconds: Number(
-                          defaults.autoCallIntervalSeconds,
-                        ),
+                        normalEconomics: {
+                          entryFee: normalEntryFeeDraft.trim(),
+                          companyFeePerCartela: normalCommissionDraft.trim(),
+                          baselineEntryFee: baselineEconomics.entryFee,
+                          baselineCompanyFeePerCartela:
+                            baselineEconomics.companyFeePerCartela,
+                        },
                       }
                     : {}),
                 });
@@ -3893,6 +4146,60 @@ function QueueOrderButtons({
       >
         <ArrowDown className="h-4 w-4" />
       </LoadingButton>
+    </div>
+  );
+}
+
+function NormalEconomicsEditor({
+  entryFee,
+  companyFeePerCartela,
+  prizePerCartela,
+  onEntryFeeChange,
+  onCommissionChange,
+}: {
+  entryFee: string;
+  companyFeePerCartela: string;
+  prizePerCartela: string;
+  onEntryFeeChange: (value: string) => void;
+  onCommissionChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground">Economics</p>
+        <p className="text-sm text-muted-foreground">
+          Prefilled from Time Config. Saving this game also updates Time Config
+          defaults for future normal games.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="normal-create-entry-fee">Entry fee (ETB)</Label>
+          <Input
+            id="normal-create-entry-fee"
+            inputMode="decimal"
+            value={entryFee}
+            onChange={(event) => onEntryFeeChange(event.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="normal-create-commission">Commission (ETB)</Label>
+          <Input
+            id="normal-create-commission"
+            inputMode="decimal"
+            value={companyFeePerCartela}
+            onChange={(event) => onCommissionChange(event.target.value)}
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Prize / cartela (calculated)
+        </p>
+        <p className="text-lg font-semibold text-blue-700">
+          {formatCurrency(prizePerCartela)}
+        </p>
+      </div>
     </div>
   );
 }

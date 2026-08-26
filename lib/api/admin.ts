@@ -121,6 +121,7 @@ export interface GameOperationItem {
   maxCartelasPerPlayer?: number | null;
   entryFee: string;
   prizePerCartela: string;
+  companyFeePerCartela?: string;
   prizeAmount: string;
   companyRevenue?: string;
   registeredCartelasCount: number;
@@ -517,6 +518,22 @@ export function updateAdminSlotEntryFee(gameId: string, entryFee: string) {
     url: `/admin/slots/${gameId}/entry-fee`,
     method: "PATCH",
     data: { entryFee },
+  });
+}
+
+export interface UpdateAdminSlotEconomicsPayload {
+  entryFee: string;
+  companyFeePerCartela: string;
+}
+
+export function updateAdminSlotEconomics(
+  gameId: string,
+  payload: UpdateAdminSlotEconomicsPayload,
+) {
+  return apiRequest<AdminGame>({
+    url: `/admin/slots/${gameId}/economics`,
+    method: "PATCH",
+    data: payload,
   });
 }
 

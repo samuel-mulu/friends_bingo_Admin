@@ -350,15 +350,17 @@ export interface UpdateDepositApprovalConfigPayload {
   }>;
 }
 
+export type WinnerPhoneDisplayMode = "HIDDEN" | "FULL" | "MASKED";
+
 export interface AppDisplayConfig {
   id: string;
-  showWinnerPhoneNumber: boolean;
+  winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
   updatedAt: string;
   updatedById: string | null;
 }
 
 export interface UpdateAppDisplayConfigPayload {
-  showWinnerPhoneNumber: boolean;
+  winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
 }
 
 export interface ChangeAdminPasswordPayload {
@@ -671,6 +673,8 @@ export interface GameTimingConfig {
   adminRefreshDebounceMs: number;
   adminFallbackPollingSeconds: number;
   flutterRefetchDebounceMs: number;
+  normalDefaultEntryFee: string;
+  normalDefaultCompanyFeePerCartela: string;
   updatedAt: string;
   updatedById: string | null;
 }
@@ -687,6 +691,8 @@ export interface UpdateGameTimingConfigPayload {
   adminRefreshDebounceMs?: number;
   adminFallbackPollingSeconds?: number;
   flutterRefetchDebounceMs?: number;
+  normalDefaultEntryFee?: string;
+  normalDefaultCompanyFeePerCartela?: string;
 }
 
 export interface AdminBingoClaim {

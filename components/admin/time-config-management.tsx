@@ -40,6 +40,8 @@ const timeConfigQueryKey = ["admin", "time-config"] as const;
 
 type TimingFieldKey = keyof UpdateGameTimingConfigPayload;
 
+type DraftRecord = Record<string, string>;
+
 type TimingField = {
   key: TimingFieldKey;
   label: string;
@@ -159,7 +161,53 @@ function configToDraft(config: GameTimingConfig): Record<string, string> {
     adminRefreshDebounceMs: String(config.adminRefreshDebounceMs),
     adminFallbackPollingSeconds: String(config.adminFallbackPollingSeconds),
     flutterRefetchDebounceMs: String(config.flutterRefetchDebounceMs),
+    normalDefaultEntryFee: config.normalDefaultEntryFee,
+    normalDefaultCompanyFeePerCartela: config.normalDefaultCompanyFeePerCartela,
   };
+}
+
+function computePrizePerCartela(entryFee: string, commission: string): string {
+  const entry = Number(entryFee);
+  const fee = Number(commission);
+  if (!Number.isFinite(entry) || !Number.isFinite(fee)) {
+    return "—";
+  }
+  const prize = entry - fee;
+  return prize >= 0 ? prize.toFixed(2).replace(/\.00$/, "") : "—";
+}
+
+function validateEconomicDraft(draft: DraftRecord): string | null {
+  const entryRaw = draft.normalDefaultEntryFee?.trim() ?? "";
+  const commissionRaw = draft.normalDefaultCompanyFeePerCartela?.trim() ?? "";
+
+  if (!entryRaw || !commissionRaw) {
+    return "Default entry fee and commission are required.";
+  }
+
+  if (!/^\d+(\.\d{1,2})?$/.test(entryRaw)) {
+    return "Default entry fee must be a valid amount.";
+  }
+
+  if (!/^\d+(\.\d{1,2})?$/.test(commissionRaw)) {
+    return "Default commission must be a valid amount.";
+  }
+
+  const entry = Number(entryRaw);
+  const commission = Number(commissionRaw);
+
+  if (entry < 1 || entry > 999) {
+    return "Default entry fee must be between 1 and 999 ETB.";
+  }
+
+  if (commission < 0) {
+    return "Default commission must be at least 0 ETB.";
+  }
+
+  if (entry - commission < 1) {
+    return "Default prize per cartela must be at least 1 ETB.";
+  }
+
+  return null;
 }
 
 function buildUpdatePayload(
@@ -169,7 +217,12 @@ function buildUpdatePayload(
   const payload: UpdateGameTimingConfigPayload = {};
 
   const compareNumber = (
-    key: Exclude<TimingFieldKey, "preparingDisplayMaxSeconds">,
+    key: Exclude<
+      TimingFieldKey,
+      | "preparingDisplayMaxSeconds"
+      | "normalDefaultEntryFee"
+      | "normalDefaultCompanyFeePerCartela"
+    >,
     value: number,
   ) => {
     if (value !== baseline[key]) {
@@ -211,6 +264,17 @@ function buildUpdatePayload(
     "flutterRefetchDebounceMs",
     Number(draft.flutterRefetchDebounceMs),
   );
+
+  if (draft.normalDefaultEntryFee !== baseline.normalDefaultEntryFee) {
+    payload.normalDefaultEntryFee = draft.normalDefaultEntryFee.trim();
+  }
+  if (
+    draft.normalDefaultCompanyFeePerCartela !==
+    baseline.normalDefaultCompanyFeePerCartela
+  ) {
+    payload.normalDefaultCompanyFeePerCartela =
+      draft.normalDefaultCompanyFeePerCartela.trim();
+  }
 
   const preparingRaw = draft.preparingDisplayMaxSeconds.trim();
   const preparingValue = preparingRaw === "" ? null : Number(preparingRaw);
@@ -374,6 +438,12 @@ export function TimeConfigManagement() {
       return;
     }
 
+    const economicValidationError = validateEconomicDraft(draft);
+    if (economicValidationError) {
+      setFormError(economicValidationError);
+      return;
+    }
+
     const payload = buildUpdatePayload(draft, timeConfigQuery.data);
     if (Object.keys(payload).length === 0) {
       setFormError("No changes to save.");
@@ -473,6 +543,60 @@ export function TimeConfigManagement() {
         draft={draft}
         onChange={handleFieldChange}
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Economic config (NORMAL games)</CardTitle>
+          <CardDescription>
+            Default entry fee and commission for newly created normal games.
+            Prize per cartela is calculated automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5 md:grid-cols-3">
+          <div className="space-y-2">
+            <Label htmlFor="normalDefaultEntryFee">Default entry fee (ETB)</Label>
+            <Input
+              id="normalDefaultEntryFee"
+              type="number"
+              min={1}
+              max={999}
+              step="0.01"
+              value={draft.normalDefaultEntryFee ?? ""}
+              onChange={(event) =>
+                handleFieldChange("normalDefaultEntryFee", event.target.value)
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="normalDefaultCompanyFeePerCartela">
+              Default commission (ETB)
+            </Label>
+            <Input
+              id="normalDefaultCompanyFeePerCartela"
+              type="number"
+              min={0}
+              step="0.01"
+              value={draft.normalDefaultCompanyFeePerCartela ?? ""}
+              onChange={(event) =>
+                handleFieldChange(
+                  "normalDefaultCompanyFeePerCartela",
+                  event.target.value,
+                )
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Default prize per cartela</Label>
+            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm font-medium">
+              {computePrizePerCartela(
+                draft.normalDefaultEntryFee ?? "",
+                draft.normalDefaultCompanyFeePerCartela ?? "",
+              )}{" "}
+              ETB
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

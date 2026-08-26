@@ -19,6 +19,7 @@ import {
   patchOperationsFromCanonicalEvent,
   parseAutoCallScheduleFromPayload,
   optimisticallyClearWaitingQueue,
+  optimisticallyPatchEconomics,
   dedupeOperationQueue,
   getOperationItemKey,
   readLiveCalledNumbers,
@@ -533,5 +534,56 @@ describe("game-operations-cache", () => {
         sessionId: null,
       } as GameOperationsCurrentResponse["queue"][number]),
     ).toBe("slot-1:slot");
+  });
+
+  it("optimistically patches economics on registration and queue rows", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...createOperationsState(),
+      registrationOpenGame: {
+        ...createOperationsState().liveGame!,
+        slotId: "slot-reg",
+        sessionId: "session-reg",
+        playerStatus: "registrationOpen",
+        operationStatus: "registration",
+        entryFee: "10",
+        prizePerCartela: "8",
+        companyFeePerCartela: "2",
+      },
+      queue: [
+        {
+          ...createOperationsState().liveGame!,
+          slotId: "slot-queue",
+          sessionId: null,
+          playerStatus: "registrationOpen",
+          operationStatus: "queue",
+          entryFee: "10",
+          prizePerCartela: "8",
+          companyFeePerCartela: "2",
+        },
+      ],
+    });
+
+    optimisticallyPatchEconomics(queryClient, "slot-reg", {
+      entryFee: "12",
+      companyFeePerCartela: "3",
+      prizePerCartela: "9",
+    });
+    optimisticallyPatchEconomics(queryClient, "slot-queue", {
+      entryFee: "11",
+      companyFeePerCartela: "1",
+      prizePerCartela: "10",
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(operations?.registrationOpenGame?.entryFee).toBe("12");
+    expect(operations?.registrationOpenGame?.companyFeePerCartela).toBe("3");
+    expect(operations?.registrationOpenGame?.prizePerCartela).toBe("9");
+    expect(operations?.queue[0]?.entryFee).toBe("11");
+    expect(operations?.queue[0]?.companyFeePerCartela).toBe("1");
+    expect(operations?.queue[0]?.prizePerCartela).toBe("10");
   });
 });

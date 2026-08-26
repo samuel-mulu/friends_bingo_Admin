@@ -22,6 +22,8 @@ type OperationSocketPatch = {
   sessionId?: string | null;
   status?: string;
   entryFee?: string;
+  prizePerCartela?: string;
+  companyFeePerCartela?: string;
   prizeAmount?: string;
   registeredCartelasCount?: number;
   calledNumbersCount?: number;
@@ -317,6 +319,12 @@ function patchGameItem(
 
   if (patch.entryFee !== undefined) {
     next.entryFee = patch.entryFee;
+  }
+  if (patch.prizePerCartela !== undefined) {
+    next.prizePerCartela = patch.prizePerCartela;
+  }
+  if (patch.companyFeePerCartela !== undefined) {
+    next.companyFeePerCartela = patch.companyFeePerCartela;
   }
   if (patch.prizeAmount !== undefined) {
     next.prizeAmount = patch.prizeAmount;
@@ -1178,6 +1186,27 @@ export function optimisticallyPatchEntryFee(
   }
 
   patchOperationsCache(queryClient, { slotId, entryFee });
+  return current;
+}
+
+export function optimisticallyPatchEconomics(
+  queryClient: QueryClient,
+  slotId: string,
+  economics: {
+    entryFee: string;
+    prizePerCartela: string;
+    companyFeePerCartela: string;
+  },
+): GameOperationsCurrentResponse | undefined {
+  const current = queryClient.getQueryData<GameOperationsCurrentResponse>(
+    operationsQueryKey,
+  );
+
+  if (!current) {
+    return undefined;
+  }
+
+  patchOperationsCache(queryClient, { slotId, ...economics });
   return current;
 }
 
