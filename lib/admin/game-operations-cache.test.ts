@@ -11,6 +11,7 @@ import {
   mergeCalledNumbersLists,
   mergeCalledNumbersResponse,
   normalizeCalledNumberPayload,
+  normalizeAdminOperationsSnapshot,
   operationsQueryKey,
   patchOperationsForFinished,
   patchOperationsForRegistration,
@@ -325,6 +326,72 @@ describe("game-operations-cache", () => {
 
     expect(patched).toBe(true);
     expect(operations?.liveGame).toBeNull();
+  });
+
+  it("drops FINISHED status_changed instead of soft-merging back into live", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(operationsQueryKey, createOperationsState());
+
+    const patched = patchOperationsForStatusChanged(queryClient, {
+      sessionId: "session-1",
+      gameSlotId: "slot-1",
+      status: "FINISHED",
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame).toBeNull();
+  });
+
+  it("strips finished Big Game from liveGame for admin display SoT", () => {
+    const finishedBigLive = {
+      ...createOperationsState().liveGame!,
+      category: "BIG_GAME" as const,
+      isBigGame: true,
+      rawStatus: "FINISHED" as const,
+      playerStatus: "finished" as const,
+      roundCount: 3,
+      roundIndex: 1,
+    };
+
+    const normalized = normalizeAdminOperationsSnapshot({
+      ...createOperationsState(),
+      liveGame: finishedBigLive,
+      bigGameNextRegistration: {
+        sessionId: "session-r2",
+        slotId: "slot-1",
+        roundIndex: 2,
+        roundCount: 3,
+        scheduledStartAt: null,
+        registrationOpensAt: "2026-09-08T12:00:00.000Z",
+        registeredCartelasCount: 4,
+        playCode: "BG-R2",
+        staticCode: "BIG-1",
+      },
+    });
+
+    expect(normalized.liveGame).toBeNull();
+    expect(normalized.bigGameNextRegistration?.roundIndex).toBe(2);
+  });
+
+  it("keeps finished Normal liveGame for post-game grace display", () => {
+    const finishedNormal = {
+      ...createOperationsState().liveGame!,
+      category: "NORMAL" as const,
+      isBigGame: false,
+      rawStatus: "FINISHED" as const,
+      playerStatus: "finished" as const,
+    };
+
+    const normalized = normalizeAdminOperationsSnapshot({
+      ...createOperationsState(),
+      liveGame: finishedNormal,
+    });
+
+    expect(normalized.liveGame?.playerStatus).toBe("finished");
   });
 
   it("patches canonical slot updates without falling back to a REST refresh", () => {

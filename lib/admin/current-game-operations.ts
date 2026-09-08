@@ -8,7 +8,10 @@ import {
   type GameOperationsCurrentResponse,
 } from "../api/admin";
 
-import { operationsQueryKey } from "./game-operations-cache";
+import {
+  normalizeAdminOperationsSnapshot,
+  operationsQueryKey,
+} from "./game-operations-cache";
 
 export const OPERATIONS_QUERY_STALE_TIME_MS = 2_000;
 export const DEFAULT_OPERATIONS_FALLBACK_POLLING_MS = 15_000;
@@ -21,7 +24,8 @@ let lastOperationsRefreshAtMs: number | null = null;
 export function createCurrentGameOperationsQueryOptions() {
   return {
     queryKey: operationsQueryKey,
-    queryFn: getCurrentGameOperations,
+    queryFn: async () =>
+      normalizeAdminOperationsSnapshot(await getCurrentGameOperations()),
     refetchOnWindowFocus: false as const,
     staleTime: OPERATIONS_QUERY_STALE_TIME_MS,
     refetchInterval: false as const,

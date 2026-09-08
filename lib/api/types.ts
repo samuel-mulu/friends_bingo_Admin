@@ -84,6 +84,8 @@ export interface AdminUserListItem {
   phoneNumber: string;
   role: "ADMIN" | "PLAYER";
   status: "ACTIVE" | "BLOCKED";
+  blockReason: string | null;
+  blockedAt: string | null;
   walletBalance: string;
   createdAt: string;
 }
@@ -136,6 +138,9 @@ export interface AdminUserDetail {
   phoneNumber: string;
   role: "ADMIN" | "PLAYER";
   status: "ACTIVE" | "BLOCKED";
+  blockReason: string | null;
+  blockedAt: string | null;
+  blockedById: string | null;
   createdAt: string;
   updatedAt: string;
   wallet: WalletSummary | null;
@@ -505,6 +510,16 @@ export interface CreateGamePayload {
   maxCartelasPerPlayer?: number;
   registrationOpensAt?: string;
   playStartAt?: string;
+  /** BIG_GAME: number of rounds (1–10). */
+  roundCount?: number;
+  /** BIG_GAME: prize per round; length must equal roundCount; sum must equal fixedPrizeAmount. */
+  roundPrizes?: string[];
+  /** BIG_GAME: delay before auto-starting the next round when roundCount > 1. */
+  interRoundDelaySeconds?: number;
+  /** NORMAL / BIG_GOTD: force-grant Big Tickets from winner prizes into the active Big Game. */
+  forceBigGameEnabled?: boolean;
+  /** NORMAL / BIG_GOTD: Big Tickets to grant per winning cartela when forceBigGameEnabled. */
+  forceBigGameCartelaCount?: number;
   operationMode?: GameOperationMode;
   registrationDurationSeconds?: number;
   autoCallIntervalSeconds?: number;
@@ -607,6 +622,7 @@ export interface FinancialReport {
   bonusCartelasUsed: number;
   expensesTotal: string;
   profitNet: string;
+  revenueBreakdown?: FinancialRevenueBreakdown;
   transactionCount: number;
   expenses: AdminExpense[];
   dailyTotals: FinancialDailyTotal[];
@@ -616,6 +632,13 @@ export interface FinancialReport {
   settlementAccount: FinancialSettlementAccountKey;
   settlementAccounts: FinancialSettlementAccount[];
   settlementBreakdown: FinancialSettlementBreakdownItem[];
+}
+
+export interface FinancialRevenueBreakdown {
+  normalCommission: string;
+  bonusPrizeCost: string;
+  bigGotdNet: string;
+  bigGameNet: string;
 }
 
 export interface FinancialSettlementAccount {
@@ -639,6 +662,9 @@ export interface GamesReportWinner {
   gameCode: string;
   gameName: string;
   gameType: string;
+  category?: GameCategory | string;
+  roundIndex?: number;
+  roundCount?: number;
   finishedAt: string | null;
   /** Prize share credited to this winning cartela. */
   prizeAmount: string;
@@ -722,10 +748,13 @@ export interface AdminBingoClaim {
     playCode: string;
     status: GameStatus;
     prizeAmount: string;
+    roundIndex?: number | null;
     gameSlot: {
       id: string;
       gameType: string;
       name: string;
+      category?: GameCategory | string | null;
+      roundCount?: number | null;
       gameRule: GameRuleSummary | null;
     };
   };

@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import type {
+  CurrentBigGameResponse,
   GameOperationItem,
   GameOperationsCurrentResponse,
 } from "@/lib/api/admin";
@@ -8,6 +9,7 @@ import type { AdminBingoClaim, CalledNumber } from "@/lib/api/types";
 
 export const operationsQueryKey = ["games", "operations", "current"] as const;
 export const bingoClaimsQueryKey = ["admin", "bingo-claims", "pending"] as const;
+export const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
 export const calledNumbersQueryKey = (sessionId: string) =>
   ["admin", "called-numbers", sessionId] as const;
@@ -415,6 +417,56 @@ export function patchOperationsCache(
   return true;
 }
 
+function isBigGameOperationItem(item: GameOperationItem | null | undefined): boolean {
+  return item?.isBigGame === true || item?.category === "BIG_GAME";
+}
+
+function isTerminalOperationItem(item: GameOperationItem | null | undefined): boolean {
+  if (!item) {
+    return false;
+  }
+  return (
+    item.playerStatus === "finished" ||
+    item.playerStatus === "cancelled" ||
+    item.rawStatus === "FINISHED" ||
+    item.rawStatus === "NO_WINNER" ||
+    item.rawStatus === "CANCELLED"
+  );
+}
+
+/**
+ * Admin display SoT: never keep a finished/cancelled Big Game round in
+ * `liveGame`. Backend may re-inject terminal sessions for a short grace window,
+ * which stacks "Current Game · PLAYING" on top of Round N+1 registration.
+ * Normal / Bonus / BIG_GOTD finished→next READY handoff is left unchanged.
+ */
+export function normalizeAdminOperationsSnapshot(
+  ops: GameOperationsCurrentResponse,
+): GameOperationsCurrentResponse {
+  const live = ops.liveGame;
+  if (!isBigGameOperationItem(live) || !isTerminalOperationItem(live)) {
+    return ops;
+  }
+
+  return {
+    ...ops,
+    liveGame: null,
+  };
+}
+
+export function setAdminOperationsQueryData(
+  queryClient: QueryClient,
+  ops: GameOperationsCurrentResponse,
+): void {
+  queryClient.setQueryData<GameOperationsCurrentResponse>(
+    operationsQueryKey,
+    {
+      ...normalizeAdminOperationsSnapshot(ops),
+      timestamp: ops.timestamp ?? new Date().toISOString(),
+    },
+  );
+}
+
 function updateOperationsSnapshot(
   queryClient: QueryClient,
   updater: (
@@ -437,15 +489,20 @@ function updateOperationsSnapshot(
     return false;
   }
 
-  logOperationsDebug("snapshot_updated", {
-    previous: summarizeOperationsSnapshot(current),
-    next: summarizeOperationsSnapshot(next),
-  });
-
-  queryClient.setQueryData<GameOperationsCurrentResponse>(operationsQueryKey, {
+  const normalized = normalizeAdminOperationsSnapshot({
     ...next,
     timestamp: new Date().toISOString(),
   });
+
+  logOperationsDebug("snapshot_updated", {
+    previous: summarizeOperationsSnapshot(current),
+    next: summarizeOperationsSnapshot(normalized),
+  });
+
+  queryClient.setQueryData<GameOperationsCurrentResponse>(
+    operationsQueryKey,
+    normalized,
+  );
   return true;
 }
 
@@ -561,6 +618,11 @@ function deriveOperationStatusForSession(
       return "checking";
     case "READY":
       return payload.registrationOpen ? "registration" : "queue";
+    case "FINISHED":
+    case "NO_WINNER":
+    case "CANCELLED":
+      // Never keep terminal sessions in the live bucket via soft-patch.
+      return "queue";
     default:
       return fallback;
   }
@@ -726,21 +788,29 @@ export function patchOperationsForStatusChanged(
   }
 
   return updateOperationsSnapshot(queryClient, (current) => {
+    const sessionId = payload.sessionId ?? payload.id ?? null;
+    const slotId = payload.gameSlotId ?? payload.gameSlot?.id ?? null;
     const existing = findMatchingOperationItem(current, {
-      sessionId: payload.sessionId ?? payload.id ?? null,
-      slotId: payload.gameSlotId ?? payload.gameSlot?.id ?? null,
+      sessionId,
+      slotId,
     });
 
     logOperationsDebug("status_changed", {
       payload: {
-        sessionId: payload.sessionId ?? payload.id ?? null,
-        slotId: payload.gameSlotId ?? payload.gameSlot?.id ?? null,
+        sessionId,
+        slotId,
         status: payload.status ?? null,
         registrationOpen: payload.registrationOpen ?? null,
       },
       existing: summarizeOperationItem(existing),
       current: summarizeOperationsSnapshot(current),
     });
+
+    // Terminal statuses must leave live/checking buckets — never soft-merge
+    // FINISHED back into live with operationStatus fallback "live".
+    if (isTerminalGameStatus(payload.status)) {
+      return removeMatchingOperationItems(current, { sessionId, slotId });
+    }
 
     if (!existing) {
       return null;
@@ -1241,4 +1311,167 @@ export function createOptimisticCalledNumber(
     order,
     createdAt: new Date().toISOString(),
   };
+}
+
+function isBigGameCategoryPayload(record: Record<string, unknown>): boolean {
+  return (
+    record.category === "BIG_GAME" ||
+    record.isBigGame === true ||
+    String(record.category ?? "").toUpperCase() === "BIG_GAME"
+  );
+}
+
+export function payloadTouchesCachedBigGame(
+  queryClient: QueryClient,
+  payload: unknown,
+): boolean {
+  const record = asRecord(payload);
+  if (!record) {
+    return false;
+  }
+
+  if (isBigGameCategoryPayload(record)) {
+    return true;
+  }
+
+  const cached = queryClient.getQueryData<CurrentBigGameResponse | null>(
+    bigGameQueryKey,
+  );
+  if (!cached) {
+    return false;
+  }
+
+  const sessionId =
+    typeof record.sessionId === "string"
+      ? record.sessionId
+      : typeof record.id === "string"
+        ? record.id
+        : null;
+  const slotId =
+    typeof record.slotId === "string"
+      ? record.slotId
+      : typeof record.gameSlotId === "string"
+        ? record.gameSlotId
+        : null;
+
+  if (sessionId && sessionId === cached.sessionId) {
+    return true;
+  }
+  if (slotId && slotId === cached.gameSlotId) {
+    return true;
+  }
+  return false;
+}
+
+/** Soft-patch scheduled Big Game card from registration socket events. */
+export function patchBigGameFromRegistration(
+  queryClient: QueryClient,
+  payload: unknown,
+): boolean {
+  if (!payloadTouchesCachedBigGame(queryClient, payload)) {
+    return false;
+  }
+
+  const record = asRecord(payload);
+  const cached = queryClient.getQueryData<CurrentBigGameResponse | null>(
+    bigGameQueryKey,
+  );
+  if (!record || !cached) {
+    return false;
+  }
+
+  const next: CurrentBigGameResponse = {
+    ...cached,
+    prizeAmount:
+      typeof record.prizeAmount === "string"
+        ? record.prizeAmount
+        : cached.prizeAmount,
+    registeredCartelasCount:
+      typeof record.registeredCartelasCount === "number"
+        ? record.registeredCartelasCount
+        : cached.registeredCartelasCount,
+    registeredByMoneyCount:
+      typeof record.registeredByMoneyCount === "number"
+        ? record.registeredByMoneyCount
+        : cached.registeredByMoneyCount,
+    registeredByTicketCount:
+      typeof record.registeredByTicketCount === "number"
+        ? record.registeredByTicketCount
+        : cached.registeredByTicketCount,
+    registeredByCarriedCount:
+      typeof record.registeredByCarriedCount === "number"
+        ? record.registeredByCarriedCount
+        : cached.registeredByCarriedCount,
+  };
+
+  queryClient.setQueryData(bigGameQueryKey, next);
+  return true;
+}
+
+export function patchBigGameStatusFromSocket(
+  queryClient: QueryClient,
+  payload: unknown,
+): boolean {
+  if (!payloadTouchesCachedBigGame(queryClient, payload)) {
+    return false;
+  }
+
+  const record = asRecord(payload);
+  const cached = queryClient.getQueryData<CurrentBigGameResponse | null>(
+    bigGameQueryKey,
+  );
+  if (!record || !cached) {
+    return false;
+  }
+
+  const status =
+    typeof record.status === "string" ? record.status : null;
+  if (!status) {
+    return false;
+  }
+
+  if (isTerminalGameStatus(status)) {
+    const payloadSessionId =
+      typeof record.sessionId === "string"
+        ? record.sessionId
+        : typeof record.id === "string"
+          ? record.id
+          : null;
+    const matchesPrimary =
+      payloadSessionId == null || payloadSessionId === cached.sessionId;
+
+    // Prefer promoting the already-open next READY round instead of flashing empty.
+    if (matchesPrimary && cached.nextRoundRegistration) {
+      queryClient.setQueryData(bigGameQueryKey, {
+        ...cached.nextRoundRegistration,
+        nextRoundRegistration: null,
+      });
+      return true;
+    }
+
+    // Clear stale round immediately; caller should also soft-refetch in case
+    // a next Big Game round / READY session was created.
+    queryClient.setQueryData(bigGameQueryKey, null);
+    return true;
+  }
+
+  queryClient.setQueryData(bigGameQueryKey, {
+    ...cached,
+    status,
+    nextRoundStartsAt:
+      typeof record.nextRoundStartsAt === "string" ||
+      record.nextRoundStartsAt === null
+        ? (record.nextRoundStartsAt as string | null)
+        : cached.nextRoundStartsAt,
+    scheduledStartAt:
+      typeof record.scheduledStartAt === "string" ||
+      record.scheduledStartAt === null
+        ? (record.scheduledStartAt as string | null)
+        : cached.scheduledStartAt,
+    roundIndex:
+      typeof record.roundIndex === "number"
+        ? record.roundIndex
+        : cached.roundIndex,
+  });
+  return true;
 }

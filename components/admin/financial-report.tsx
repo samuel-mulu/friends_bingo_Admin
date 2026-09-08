@@ -523,7 +523,7 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Company Fee Total"
               value={formatCurrency(financialQuery.data.companyFeeTotal)}
-              description="Real-money company fees from paid registrations"
+              description="NORMAL game commission from money-wallet registrations only"
               icon={<Building2 className="size-5" />}
             />
             <ReportMetricCard
@@ -553,7 +553,7 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Bonus Game Prizes"
               value={formatCurrency(financialQuery.data.bonusGamePrizePaidTotal)}
-              description="Promotional prize cost from free bonus-category games (included in net revenue)"
+              description="Promotional prize cost from free bonus-category games"
               icon={<Trophy className="size-5" />}
             />
             <ReportMetricCard
@@ -565,13 +565,13 @@ export function FinancialReportView() {
             <ReportMetricCard
               title="Net Revenue"
               value={formatCurrency(financialQuery.data.netRevenue)}
-              description="Real-money game entries minus all prizes paid (bonus games have no entry income)"
+              description="Normal commission − bonus prizes + (BIG GOTD/BIG GAME entries − prizes)"
               icon={<Coins className="size-5" />}
             />
             <ReportMetricCard
               title="Profit Net"
               value={formatCurrency(financialQuery.data.profitNet)}
-              description="Company fees minus expenses and bonus game prizes"
+              description="Net revenue minus expenses"
               icon={<Scale className="size-5" />}
               emphasize
             />
@@ -581,6 +581,60 @@ export function FinancialReportView() {
               description="Combined deposit, withdrawal, entry, and prize events"
             />
           </div>
+
+          {financialQuery.data.revenueBreakdown ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Revenue breakdown</CardTitle>
+                <CardDescription>
+                  How net revenue is calculated for this period.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border border-border/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Normal commission
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(
+                      financialQuery.data.revenueBreakdown.normalCommission,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Bonus prize cost
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    −
+                    {formatCurrency(
+                      financialQuery.data.revenueBreakdown.bonusPrizeCost,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    BIG GOTD net
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(
+                      financialQuery.data.revenueBreakdown.bigGotdNet,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    BIG GAME net
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(
+                      financialQuery.data.revenueBreakdown.bigGameNet,
+                    )}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <div className="grid gap-4 xl:grid-cols-[1fr_1.1fr]">
             <Card>

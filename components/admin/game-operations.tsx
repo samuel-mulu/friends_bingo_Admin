@@ -78,6 +78,8 @@ import {
   rejectAdminBingoClaim,
   reorderAdminSlots,
   startAdminGame,
+  startAdminBigGameNextRound,
+  startAdminBigGameNow,
   startSessionAutoCall,
   stopSessionAutoCall,
   updateAdminGameStatus,
@@ -157,6 +159,55 @@ function computePrizePerCartelaFromEconomics(
   }
   const prize = entry - fee;
   return prize >= 0 ? prize.toFixed(2).replace(/\.00$/, "") : "0";
+}
+
+function resizeRoundPrizeDrafts(prizes: string[], count: number): string[] {
+  const safeCount = Math.max(1, Math.min(10, count));
+  if (prizes.length === safeCount) {
+    return prizes;
+  }
+  if (prizes.length > safeCount) {
+    return prizes.slice(0, safeCount);
+  }
+  return [...prizes, ...Array.from({ length: safeCount - prizes.length }, () => "")];
+}
+
+function sumMoneyDrafts(values: string[]): number | null {
+  let totalCents = 0;
+  for (const value of values) {
+    const amount = Number(value.trim());
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return null;
+    }
+    totalCents += Math.round(amount * 100);
+  }
+  return totalCents / 100;
+}
+
+function resolveDisplayedRoundIndex(game: {
+  roundIndex?: number | null;
+  currentRound?: number | null;
+}): number {
+  return game.roundIndex ?? game.currentRound ?? 1;
+}
+
+function resolveCurrentRoundPrize(game: {
+  roundIndex?: number | null;
+  currentRound?: number | null;
+  roundPrizes?: string[] | null;
+  roundPrizeAmount?: string | null;
+  fixedPrizeAmount?: string | null;
+  prizeAmount?: string | null;
+}): string | null {
+  const roundIndex = resolveDisplayedRoundIndex(game);
+  const fromList = game.roundPrizes?.[roundIndex - 1];
+  if (fromList != null && String(fromList).trim() !== "") {
+    return String(fromList);
+  }
+  if (game.roundPrizeAmount != null && String(game.roundPrizeAmount).trim() !== "") {
+    return String(game.roundPrizeAmount);
+  }
+  return game.fixedPrizeAmount ?? game.prizeAmount ?? null;
 }
 
 function resolveCompanyFeePerCartela(game: GameOperationItem): string {
@@ -267,6 +318,7 @@ function getCategorySurfaceClassName(
 }
 import {
   bingoClaimsQueryKey,
+  bigGameQueryKey,
   calledNumbersQueryKey,
   type CalledNumbersCache,
   createOptimisticCalledNumber,
@@ -276,7 +328,10 @@ import {
   logCalledNumberEvent,
   mergeCalledNumbersResponse,
   operationsQueryKey,
-  patchOperationsForFinished,
+  patchBigGameFromRegistration,
+  patchBigGameStatusFromSocket,
+  payloadTouchesCachedBigGame,
+  handleTerminalGameEvent,
   patchOperationsForRegistration,
   patchOperationsForStatusChanged,
   patchOperationsForWinnerWindow,
@@ -289,6 +344,8 @@ import {
   applyRealtimeCalledNumber,
   patchOperationsCache,
   readLiveCalledNumbers,
+  setAdminOperationsQueryData,
+  normalizeAdminOperationsSnapshot,
 } from "@/lib/admin/game-operations-cache";
 import {
   createCurrentGameOperationsQueryOptions,
@@ -332,7 +389,6 @@ import {
 
 const FALLBACK_OPERATIONS_INVALIDATE_DEBOUNCE_MS = 2500;
 const timeConfigQueryKey = ["admin", "time-config"] as const;
-const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
 function logAdminGamesDebug(label: string, payload: Record<string, unknown>) {
   if (process.env.NODE_ENV !== "development") {
@@ -366,6 +422,12 @@ export function GameOperations() {
   const [bigGameRegistrationOpensAt, setBigGameRegistrationOpensAt] =
     useState("");
   const [bigGamePlayStartAt, setBigGamePlayStartAt] = useState("");
+  const [bigGameRoundCount, setBigGameRoundCount] = useState("1");
+  const [bigGameRoundPrizes, setBigGameRoundPrizes] = useState<string[]>([""]);
+  const [bigGameInterRoundDelaySeconds, setBigGameInterRoundDelaySeconds] =
+    useState("300");
+  const [forceBigGameEnabled, setForceBigGameEnabled] = useState(false);
+  const [forceBigGameCartelaCount, setForceBigGameCartelaCount] = useState("1");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
   const [normalEntryFeeDraft, setNormalEntryFeeDraft] = useState(
     FALLBACK_NORMAL_ENTRY_FEE,
@@ -461,8 +523,13 @@ export function GameOperations() {
   const { data: scheduledBigGame } = useQuery({
     queryKey: bigGameQueryKey,
     queryFn: getCurrentBigGame,
-    refetchOnWindowFocus: true,
-    staleTime: 2_000,
+    // Socket + explicit mutations refresh Big Game. No HTTP polling — that was
+    // saturating the API (2–3s queries) and causing 503 / reconnect loops.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
+    retry: 1,
     placeholderData: keepPreviousData,
   });
 
@@ -487,7 +554,19 @@ export function GameOperations() {
         : rawQueue,
     );
   }, [operations?.queue, standardRegistrationOpenGame?.slotId]);
-  const currentGame = liveGame ?? checkingGame ?? null;
+  // Big Game finished rounds must not occupy Current Game chrome (backend may
+  // briefly re-inject terminal liveGame). Round N+1 READY shows via Big Game card.
+  const currentGame = useMemo(() => {
+    const raw = liveGame ?? checkingGame ?? null;
+    if (
+      raw &&
+      isBigGameOperationItem(raw) &&
+      (raw.playerStatus === "finished" || raw.playerStatus === "cancelled")
+    ) {
+      return null;
+    }
+    return raw;
+  }, [liveGame, checkingGame]);
   const isWinnerWindow = currentGame?.playerStatus === "winnerWindow";
   const isManualChecking = checkingGame?.gameRule?.key === "MANUAL";
   const [winnerWindowNow, setWinnerWindowNow] = useState(() => Date.now());
@@ -524,6 +603,9 @@ export function GameOperations() {
   const invalidateDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const bigGameInvalidateDebounceRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const liveSessionIdRef = useRef(liveSessionId);
   const previousLiveSessionIdRef = useRef<string | null>(null);
   const previousCurrentSessionIdRef = useRef<string | null>(null);
@@ -656,9 +738,6 @@ export function GameOperations() {
       const refresh = () => {
         void refreshCurrentGameOperations(queryClient);
         void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
-        void queryClient.invalidateQueries({
-          queryKey: ["admin", "big-game", "current"],
-        });
       };
 
       if (immediate) {
@@ -668,6 +747,31 @@ export function GameOperations() {
 
       invalidateDebounceRef.current = setTimeout(() => {
         invalidateDebounceRef.current = null;
+        refresh();
+      }, operationsInvalidateDebounceMs);
+    },
+    [operationsInvalidateDebounceMs, queryClient],
+  );
+
+  /** Rare HTTP refresh for Big Game create / next-round / cancel — not live play. */
+  const scheduleBigGameRefresh = useCallback(
+    (immediate = false) => {
+      if (bigGameInvalidateDebounceRef.current) {
+        clearTimeout(bigGameInvalidateDebounceRef.current);
+        bigGameInvalidateDebounceRef.current = null;
+      }
+
+      const refresh = () => {
+        void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      };
+
+      if (immediate) {
+        refresh();
+        return;
+      }
+
+      bigGameInvalidateDebounceRef.current = setTimeout(() => {
+        bigGameInvalidateDebounceRef.current = null;
         refresh();
       }, operationsInvalidateDebounceMs);
     },
@@ -984,6 +1088,36 @@ export function GameOperations() {
 
   const showScheduledBigGameCard =
     scheduledBigGame != null && !isBigGameOperationItem(currentGame);
+  const liveBigGameNextRegistration =
+    isBigGameOperationItem(currentGame) &&
+    currentGame?.playerStatus !== "finished" &&
+    currentGame?.playerStatus !== "cancelled"
+      ? (scheduledBigGame?.nextRoundRegistration ??
+        (operations?.bigGameNextRegistration
+          ? {
+              sessionId: operations.bigGameNextRegistration.sessionId,
+              gameSlotId: operations.bigGameNextRegistration.slotId,
+              staticCode: operations.bigGameNextRegistration.staticCode,
+              playCode: operations.bigGameNextRegistration.playCode,
+              name: scheduledBigGame?.name ?? "Big Game",
+              status: "READY",
+              category: "BIG_GAME" as const,
+              entryFee: scheduledBigGame?.entryFee ?? "0",
+              prizeAmount: "0",
+              fixedPrizeAmount: scheduledBigGame?.fixedPrizeAmount ?? null,
+              registeredCartelasCount:
+                operations.bigGameNextRegistration.registeredCartelasCount,
+              registrationOpensAt:
+                operations.bigGameNextRegistration.registrationOpensAt,
+              scheduledStartAt:
+                operations.bigGameNextRegistration.scheduledStartAt,
+              roundCount: operations.bigGameNextRegistration.roundCount ?? undefined,
+              roundIndex: operations.bigGameNextRegistration.roundIndex,
+            }
+          : null))
+      : null;
+  const showLiveBigGameNextRegistrationCard =
+    liveBigGameNextRegistration != null;
   const hasActiveBigGame =
     scheduledBigGame != null || isBigGameOperationItem(currentGame);
 
@@ -1112,7 +1246,8 @@ export function GameOperations() {
       refetchCalledNumbersForSession(queryClient, liveSessionIdRef.current);
       void refreshCurrentGameOperations(queryClient);
       void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
-      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      // Do not invalidate big-game here — reconnect storms were flooding
+      // GET /games/big-game/current and taking the API down.
     };
 
     const handleOperationUpdated = (payload: unknown) => {
@@ -1142,10 +1277,9 @@ export function GameOperations() {
       }
     };
 
-    const handleTerminalSession = (payload: unknown, allowRecovery = false) => {
+    const handleTerminalSession = (payload: unknown) => {
       logAdminGamesDebug("socket_terminal_session", {
         payload,
-        allowRecovery,
       });
       if (payload && typeof payload === "object") {
         const data = payload as {
@@ -1174,7 +1308,9 @@ export function GameOperations() {
           );
         }
 
-        patchOperationsForFinished(queryClient, {
+        // Drop finished round from Current Game immediately, then refetch ops
+        // so Round N+1 READY / next live becomes SoT (not stacked finished UI).
+        handleTerminalGameEvent(queryClient, {
           sessionId: data.sessionId ?? data.id ?? null,
           slotId: data.slotId ?? data.gameSlotId ?? null,
         });
@@ -1184,8 +1320,10 @@ export function GameOperations() {
         );
       }
 
-      if (allowRecovery) {
-        scheduleOperationsRefresh(true);
+      if (payloadTouchesCachedBigGame(queryClient, payload)) {
+        patchBigGameStatusFromSocket(queryClient, payload);
+        // Next-round READY sessions need a fetch after a round ends.
+        scheduleBigGameRefresh(true);
       }
     };
 
@@ -1253,6 +1391,12 @@ export function GameOperations() {
       if (!patchOperationsForStatusChanged(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
+
+      if (payloadTouchesCachedBigGame(queryClient, payload)) {
+        if (!patchBigGameStatusFromSocket(queryClient, payload)) {
+          scheduleBigGameRefresh(false);
+        }
+      }
     };
 
     const handleWinnerWindow = (payload: unknown) => {
@@ -1275,6 +1419,11 @@ export function GameOperations() {
       if (!patchOperationsForWinnerWindow(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
+      if (payloadTouchesCachedBigGame(queryClient, payload)) {
+        if (!patchBigGameStatusFromSocket(queryClient, payload)) {
+          scheduleBigGameRefresh(false);
+        }
+      }
     };
 
     const handleRegistrationMetrics = (payload: unknown) => {
@@ -1282,12 +1431,16 @@ export function GameOperations() {
       if (!patchOperationsForRegistration(queryClient, payload)) {
         scheduleOperationsRefresh(true);
       }
+      patchBigGameFromRegistration(queryClient, payload);
     };
 
     const handleSlotUpdate = (payload: unknown) => {
       logAdminGamesDebug("socket_slot_update", { payload });
       if (!patchOperationsFromCanonicalEvent(queryClient, payload)) {
         scheduleOperationsRefresh(true);
+      }
+      if (payloadTouchesCachedBigGame(queryClient, payload)) {
+        scheduleBigGameRefresh(false);
       }
     };
 
@@ -1318,6 +1471,9 @@ export function GameOperations() {
       if (invalidateDebounceRef.current) {
         clearTimeout(invalidateDebounceRef.current);
       }
+      if (bigGameInvalidateDebounceRef.current) {
+        clearTimeout(bigGameInvalidateDebounceRef.current);
+      }
 
       cleanupRealtimeListeners();
     };
@@ -1325,6 +1481,7 @@ export function GameOperations() {
     queryClient,
     bumpCalledNumbersRevision,
     scheduleOperationsRefresh,
+    scheduleBigGameRefresh,
     socketConnected,
     transitionLocked,
     transitionLockSessionId,
@@ -1430,7 +1587,7 @@ export function GameOperations() {
         scrollToQueueAfterCreateRef.current = true;
       }
       if (data.operations) {
-        queryClient.setQueryData(operationsQueryKey, data.operations);
+        setAdminOperationsQueryData(queryClient, data.operations);
       }
       void queryClient.invalidateQueries({ queryKey: timeConfigQueryKey });
       scheduleOperationsRefresh(true);
@@ -1453,8 +1610,10 @@ export function GameOperations() {
     errorMessage: "Failed to start game.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
-      queryClient.setQueryData(operationsQueryKey, data.operations);
-      const liveStatus = data.operations.liveGame?.playerStatus ?? null;
+      setAdminOperationsQueryData(queryClient, data.operations);
+      const liveStatus =
+        normalizeAdminOperationsSnapshot(data.operations).liveGame
+          ?.playerStatus ?? null;
       if (liveStatus === "playing") {
         unlockTransitionUi();
       }
@@ -1469,10 +1628,11 @@ export function GameOperations() {
     errorMessage: "Failed to cancel live game.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
-      queryClient.setQueryData(operationsQueryKey, data.operations);
+      const normalized = normalizeAdminOperationsSnapshot(data.operations);
+      setAdminOperationsQueryData(queryClient, data.operations);
       const currentStatus =
-        data.operations.liveGame?.playerStatus ??
-        data.operations.checkingGame?.playerStatus ??
+        normalized.liveGame?.playerStatus ??
+        normalized.checkingGame?.playerStatus ??
         null;
       if (currentStatus !== "playing" && currentStatus !== "checking") {
         unlockTransitionUi();
@@ -1489,11 +1649,15 @@ export function GameOperations() {
     errorMessage: "Failed to finish winner window.",
     invalidateQueryKeys: [],
     onSuccess: (data) => {
-      queryClient.setQueryData(operationsQueryKey, data.operations);
-      const liveStatus = data.operations.liveGame?.playerStatus ?? null;
+      // Drop finished Big Game from Current Game; promote Round N+1 via Big Game cache.
+      setAdminOperationsQueryData(queryClient, data.operations);
+      const normalized = normalizeAdminOperationsSnapshot(data.operations);
+      const liveStatus = normalized.liveGame?.playerStatus ?? null;
       if (liveStatus !== "winnerWindow") {
         unlockTransitionUi();
       }
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      scheduleOperationsRefresh(true);
     },
     onError: () => {
       unlockTransitionUi();
@@ -1546,6 +1710,28 @@ export function GameOperations() {
       setBigGameScheduleError(
         getApiErrorMessage(error, "Could not update the Big Game schedule."),
       );
+    },
+  });
+
+  const startBigGameNextRound = useAdminMutation({
+    mutationFn: (slotId: string) => startAdminBigGameNextRound(slotId),
+    successMessage: "Next Big Game round started.",
+    errorMessage: "Could not start the next Big Game round.",
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      scheduleOperationsRefresh(true);
+    },
+  });
+
+  const startBigGameNow = useAdminMutation({
+    mutationFn: (slotId: string) => startAdminBigGameNow(slotId),
+    successMessage: "Big Game started.",
+    errorMessage: "Could not start the Big Game.",
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: bigGameQueryKey });
+      scheduleOperationsRefresh(true);
     },
   });
 
@@ -1757,7 +1943,7 @@ export function GameOperations() {
     onSuccess: (result) => {
       setClearQueueOpen(false);
       if (result.operations) {
-        queryClient.setQueryData(operationsQueryKey, result.operations);
+        setAdminOperationsQueryData(queryClient, result.operations);
       } else {
         optimisticallyClearWaitingQueue(queryClient, {
           keptRegistration: result.keptRegistration,
@@ -2009,6 +2195,19 @@ export function GameOperations() {
                     Big Game
                   </Badge>
                 ) : null}
+                {isBigGameOperationItem(currentGame) &&
+                (currentGame.roundCount ?? 1) > 0 ? (
+                  <Badge variant="outline" className="border-violet-300 text-violet-800">
+                    Round {resolveDisplayedRoundIndex(currentGame)} of{" "}
+                    {currentGame.roundCount ?? 1}
+                    {(() => {
+                      const roundPrize = resolveCurrentRoundPrize(currentGame);
+                      return roundPrize
+                        ? ` · ${formatCurrency(roundPrize)}`
+                        : "";
+                    })()}
+                  </Badge>
+                ) : null}
                 {isBonusOperationItem(currentGame) ? (
                   <Badge className="bg-amber-200 text-amber-950 hover:bg-amber-200">
                     Bonus
@@ -2024,7 +2223,9 @@ export function GameOperations() {
                     ? "WINNER WINDOW"
                     : currentGame.playerStatus === "checking"
                       ? "CHECKING"
-                      : "PLAYING"}
+                      : currentGame.playerStatus === "finished"
+                        ? "FINISHED"
+                        : "PLAYING"}
                 </Badge>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -2296,12 +2497,13 @@ export function GameOperations() {
               </div>
             ) : null}
 
-            {currentGame.playerStatus !== "checking" ? (
+            {currentGame.playerStatus === "playing" ||
+            currentGame.playerStatus === "winnerWindow" ? (
               <div className="flex flex-col gap-2 sm:flex-row">
                 {currentGame.operationMode === "MANUAL" || !isAutoCalling ? (
                   <Button
                     onClick={() => setIsCallNumberModalOpen(true)}
-                    disabled={!liveSessionId}
+                    disabled={!liveSessionId || currentGame.playerStatus !== "playing"}
                     className="flex-1"
                     size="lg"
                     variant={
@@ -2666,6 +2868,68 @@ export function GameOperations() {
         </Card>
       )}
 
+      {showLiveBigGameNextRegistrationCard && liveBigGameNextRegistration ? (
+        <Card className="border-violet-200 bg-gradient-to-br from-violet-50/80 to-slate-50">
+          <CardHeader className="pb-2">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Trophy className="h-5 w-5 text-violet-600" />
+                  <CardTitle className="text-violet-950">
+                    Next round registration
+                  </CardTitle>
+                  <Badge className="bg-violet-100 text-violet-800">
+                    Round {liveBigGameNextRegistration.roundIndex ?? 2} of{" "}
+                    {liveBigGameNextRegistration.roundCount ??
+                      scheduledBigGame?.roundCount ??
+                      "?"}
+                  </Badge>
+                  <Badge variant="outline" className="border-violet-300 text-violet-800">
+                    Ready
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {liveBigGameNextRegistration.staticCode}
+                  {liveBigGameNextRegistration.playCode
+                    ? ` / ${liveBigGameNextRegistration.playCode}`
+                    : ""}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {liveBigGameNextRegistration.scheduledStartAt
+                    ? `Play starts ${formatDateTime(liveBigGameNextRegistration.scheduledStartAt)}`
+                    : "Registration open — starts after the current round finishes."}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {liveBigGameNextRegistration.registeredCartelasCount} cartelas
+                  registered for this round
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <LoadingButton
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    startBigGameNextRound.mutate(
+                      liveBigGameNextRegistration.gameSlotId,
+                    )
+                  }
+                  isLoading={isMutationPendingFor(
+                    startBigGameNextRound,
+                    liveBigGameNextRegistration.gameSlotId,
+                  )}
+                  loadingLabel="Starting..."
+                  disabled={!liveBigGameNextRegistration.scheduledStartAt}
+                  className="border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Start next round now
+                </LoadingButton>
+              </div>
+            </div>
+          </CardHeader>
+        </Card>
+      ) : null}
+
       {showScheduledBigGameCard && scheduledBigGame ? (
         <Card className="border-violet-200 bg-gradient-to-br from-violet-50/80 to-slate-50">
           <CardHeader className="pb-2">
@@ -2677,9 +2941,12 @@ export function GameOperations() {
                   <Badge className="bg-violet-100 text-violet-800">
                     {scheduledBigGame.heldWaitingForLiveSlot
                       ? "Held"
-                      : scheduledBigGame.status === "READY"
-                        ? "Scheduled"
-                        : scheduledBigGame.status}
+                      : scheduledBigGame.status === "READY" &&
+                          (scheduledBigGame.roundIndex ?? 1) > 1
+                        ? `Next round registration open · Round ${resolveDisplayedRoundIndex(scheduledBigGame)} of ${scheduledBigGame.roundCount ?? 1}`
+                        : scheduledBigGame.status === "READY"
+                          ? "Scheduled"
+                          : scheduledBigGame.status}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -2702,8 +2969,84 @@ export function GameOperations() {
                 <p className="text-sm text-muted-foreground">
                   Managed on its own schedule — not part of the normal queue.
                 </p>
+                {(scheduledBigGame.roundCount ?? 1) > 0 ? (
+                  <div className="space-y-1 pt-1">
+                    <p className="text-sm font-medium text-violet-900">
+                      Round {resolveDisplayedRoundIndex(scheduledBigGame)} of{" "}
+                      {scheduledBigGame.roundCount ?? 1}
+                    </p>
+                    {(() => {
+                      const roundPrize =
+                        resolveCurrentRoundPrize(scheduledBigGame);
+                      return roundPrize ? (
+                        <p className="text-sm text-muted-foreground">
+                          Current round prize{" "}
+                          <span className="font-semibold text-violet-800">
+                            {formatCurrency(roundPrize)}
+                          </span>
+                        </p>
+                      ) : null;
+                    })()}
+                    {scheduledBigGame.nextRoundStartsAt ||
+                    ((scheduledBigGame.roundIndex ?? 1) > 1 &&
+                      scheduledBigGame.scheduledStartAt) ? (
+                      <p className="text-sm text-muted-foreground">
+                        {(scheduledBigGame.roundIndex ?? 1) > 1
+                          ? "Play starts "
+                          : "Next round starts "}
+                        {formatDateTime(
+                          scheduledBigGame.scheduledStartAt ??
+                            scheduledBigGame.nextRoundStartsAt,
+                        )}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {scheduledBigGame.status === "READY" &&
+                (scheduledBigGame.roundIndex ?? 1) <= 1 ? (
+                  <LoadingButton
+                    size="sm"
+                    onClick={() =>
+                      startBigGameNow.mutate(scheduledBigGame.gameSlotId)
+                    }
+                    isLoading={isMutationPendingFor(
+                      startBigGameNow,
+                      scheduledBigGame.gameSlotId,
+                    )}
+                    loadingLabel="Starting..."
+                    className="bg-violet-700 text-white hover:bg-violet-800"
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Start Big Game now
+                  </LoadingButton>
+                ) : null}
+                {(scheduledBigGame.roundCount ?? 1) > 1 ? (
+                  <LoadingButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      startBigGameNextRound.mutate(scheduledBigGame.gameSlotId)
+                    }
+                    isLoading={isMutationPendingFor(
+                      startBigGameNextRound,
+                      scheduledBigGame.gameSlotId,
+                    )}
+                    loadingLabel="Starting..."
+                    disabled={
+                      !(
+                        ((scheduledBigGame.roundIndex ?? 1) > 1 &&
+                          scheduledBigGame.status === "READY") ||
+                        scheduledBigGame.nextRoundStartsAt
+                      )
+                    }
+                    className="border-violet-200 bg-white text-violet-800 hover:bg-violet-50"
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Start next round now
+                  </LoadingButton>
+                ) : null}
                 {scheduledBigGame.status === "READY" &&
                 !bigGameScheduleEditing ? (
                   <Button
@@ -2911,6 +3254,14 @@ export function GameOperations() {
             >
               <Users className="mr-1 inline h-4 w-4" />
               {scheduledBigGame.registeredCartelasCount} cartelas registered
+              {typeof scheduledBigGame.registeredByMoneyCount === "number" ||
+              typeof scheduledBigGame.registeredByTicketCount === "number"
+                ? ` · ${scheduledBigGame.registeredByMoneyCount ?? 0} money · ${scheduledBigGame.registeredByTicketCount ?? 0} ticket${
+                    (scheduledBigGame.registeredByCarriedCount ?? 0) > 0
+                      ? ` · ${scheduledBigGame.registeredByCarriedCount} carried`
+                      : ""
+                  }`
+                : ""}
               {scheduledBigGame.sessionId ? " · view players" : ""}
             </button>
           </CardContent>
@@ -3092,16 +3443,21 @@ export function GameOperations() {
             setBigGameMaxCartelasPerPlayer("20");
             setBigGameRegistrationOpensAt("");
             setBigGamePlayStartAt("");
+            setBigGameRoundCount("1");
+            setBigGameRoundPrizes([""]);
+            setBigGameInterRoundDelaySeconds("300");
+            setForceBigGameEnabled(false);
+            setForceBigGameCartelaCount("1");
           }
         }}
       >
         <DialogContent
           className={cn(
-            "sm:max-w-md",
+            "flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md",
             createGameCategory === "BIG_GAME" && "sm:max-w-lg",
           )}
         >
-          <DialogHeader>
+          <DialogHeader className="shrink-0 border-b px-6 py-4 pr-12">
             <DialogTitle>Add Game to Queue</DialogTitle>
             <DialogDescription>
               {createGameCategory === "BIG_GAME"
@@ -3114,7 +3470,7 @@ export function GameOperations() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-6 py-4">
             <div className="space-y-2">
               <Label>Game type</Label>
               <Select
@@ -3287,6 +3643,119 @@ export function GameOperations() {
                     }
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="big-game-round-count">Rounds</Label>
+                  <Input
+                    id="big-game-round-count"
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={bigGameRoundCount}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setBigGameRoundCount(nextValue);
+                      const nextCount = Number(nextValue);
+                      if (Number.isInteger(nextCount) && nextCount >= 1 && nextCount <= 10) {
+                        setBigGameRoundPrizes((current) =>
+                          resizeRoundPrizeDrafts(current, nextCount),
+                        );
+                      }
+                    }}
+                  />
+                </div>
+                {Number(bigGameRoundCount) > 1 ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="big-game-inter-round-delay">
+                        Inter-round delay (seconds)
+                      </Label>
+                      <Input
+                        id="big-game-inter-round-delay"
+                        type="number"
+                        min={60}
+                        max={3600}
+                        value={bigGameInterRoundDelaySeconds}
+                        onChange={(event) =>
+                          setBigGameInterRoundDelaySeconds(event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-3 sm:col-span-2">
+                      <Label>Round prizes (must sum to prize pool)</Label>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {bigGameRoundPrizes.map((prize, index) => (
+                          <div key={`round-prize-${index}`} className="space-y-2">
+                            <Label htmlFor={`big-game-round-prize-${index}`}>
+                              Round {index + 1} prize
+                            </Label>
+                            <Input
+                              id={`big-game-round-prize-${index}`}
+                              inputMode="decimal"
+                              placeholder="0"
+                              value={prize}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setBigGameRoundPrizes((current) =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index ? value : item,
+                                  ),
+                                );
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {createGameCategory === "NORMAL" ||
+            createGameCategory === "BIG_GOTD" ? (
+              <div className="space-y-3 rounded-md border border-border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="force-big-game-enabled">
+                      Force Big Tickets
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {hasActiveBigGame
+                        ? "Grant Big Tickets from this game's winners into the scheduled Big Game."
+                        : "Requires an active/scheduled Big Game."}
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input
+                      id="force-big-game-enabled"
+                      type="checkbox"
+                      checked={forceBigGameEnabled && hasActiveBigGame}
+                      disabled={!hasActiveBigGame}
+                      onChange={(event) =>
+                        setForceBigGameEnabled(event.target.checked)
+                      }
+                      className="size-4 rounded border-border"
+                    />
+                    On
+                  </label>
+                </div>
+                {forceBigGameEnabled && hasActiveBigGame ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="force-big-game-cartela-count">
+                      Big Tickets per winning cartela
+                    </Label>
+                    <Input
+                      id="force-big-game-cartela-count"
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={forceBigGameCartelaCount}
+                      onChange={(event) =>
+                        setForceBigGameCartelaCount(event.target.value)
+                      }
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -3295,7 +3764,7 @@ export function GameOperations() {
             ) : null}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t px-6 py-3">
             <Button
               variant="outline"
               onClick={() => setIsCreateGameModalOpen(false)}
@@ -3365,6 +3834,62 @@ export function GameOperations() {
                     return;
                   }
 
+                  const roundCount = Number(bigGameRoundCount);
+                  if (
+                    !Number.isInteger(roundCount) ||
+                    roundCount < 1 ||
+                    roundCount > 10
+                  ) {
+                    setCreateGameError("Rounds must be an integer from 1 to 10.");
+                    return;
+                  }
+
+                  const roundPrizes =
+                    roundCount > 1
+                      ? resizeRoundPrizeDrafts(bigGameRoundPrizes, roundCount).map(
+                          (value) => value.trim(),
+                        )
+                      : undefined;
+
+                  if (roundCount > 1) {
+                    if (!roundPrizes || roundPrizes.some((value) => !value)) {
+                      setCreateGameError(
+                        "Enter a prize for every Big Game round.",
+                      );
+                      return;
+                    }
+
+                    const prizesSum = sumMoneyDrafts(roundPrizes);
+                    const prizePool = Number(bigGameFixedPrizeAmount.trim());
+                    if (
+                      prizesSum == null ||
+                      !Number.isFinite(prizePool) ||
+                      Math.round(prizesSum * 100) !== Math.round(prizePool * 100)
+                    ) {
+                      setCreateGameError(
+                        "Round prizes must sum to the prize pool.",
+                      );
+                      return;
+                    }
+                  }
+
+                  const interRoundDelaySeconds =
+                    roundCount > 1
+                      ? Number(bigGameInterRoundDelaySeconds)
+                      : undefined;
+                  if (roundCount > 1) {
+                    if (
+                      !Number.isInteger(interRoundDelaySeconds) ||
+                      (interRoundDelaySeconds ?? 0) < 60 ||
+                      (interRoundDelaySeconds ?? 0) > 3600
+                    ) {
+                      setCreateGameError(
+                        "Inter-round delay must be between 60 and 3600 seconds.",
+                      );
+                      return;
+                    }
+                  }
+
                   const registrationOpensAt = datetimeLocalToIso(
                     bigGameRegistrationOpensAt,
                   );
@@ -3397,9 +3922,42 @@ export function GameOperations() {
                       maxCartelasPerPlayer: maxCartelas,
                       registrationOpensAt,
                       playStartAt,
+                      operationMode: "AUTO",
+                      roundCount,
+                      ...(roundCount > 1
+                        ? {
+                            roundPrizes,
+                            interRoundDelaySeconds,
+                          }
+                        : {}),
                     },
                   });
                   return;
+                }
+
+                if (
+                  (createGameCategory === "NORMAL" ||
+                    createGameCategory === "BIG_GOTD") &&
+                  forceBigGameEnabled
+                ) {
+                  if (!hasActiveBigGame) {
+                    setCreateGameError(
+                      "Force Big Tickets requires an active Big Game.",
+                    );
+                    return;
+                  }
+
+                  const forceCount = Number(forceBigGameCartelaCount);
+                  if (
+                    !Number.isInteger(forceCount) ||
+                    forceCount < 1 ||
+                    forceCount > 10
+                  ) {
+                    setCreateGameError(
+                      "Big Tickets per winning cartela must be from 1 to 10.",
+                    );
+                    return;
+                  }
                 }
 
                 if (createGameCategory === "NORMAL") {
@@ -3435,6 +3993,17 @@ export function GameOperations() {
                           fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
                           maxCartelasPerPlayer: Number(bonusMaxCartelasPerPlayer),
                         }
+                      : {}),
+                    ...(createGameCategory === "NORMAL" ||
+                    createGameCategory === "BIG_GOTD"
+                      ? forceBigGameEnabled && hasActiveBigGame
+                        ? {
+                            forceBigGameEnabled: true,
+                            forceBigGameCartelaCount: Number(
+                              forceBigGameCartelaCount,
+                            ),
+                          }
+                        : { forceBigGameEnabled: false }
                       : {}),
                     operationMode: defaults.operationMode,
                     ...(defaults.operationMode === "AUTO"
@@ -3666,6 +4235,18 @@ export function GameOperations() {
                     registeredPlayersQuery.data.registeredCartelasCount === 1
                       ? ""
                       : "s"
+                  }${
+                    typeof registeredPlayersQuery.data.registeredByMoneyCount ===
+                      "number" ||
+                    typeof registeredPlayersQuery.data
+                      .registeredByTicketCount === "number"
+                      ? ` · ${registeredPlayersQuery.data.registeredByMoneyCount ?? 0} money · ${registeredPlayersQuery.data.registeredByTicketCount ?? 0} ticket${
+                          (registeredPlayersQuery.data
+                            .registeredByCarriedCount ?? 0) > 0
+                            ? ` · ${registeredPlayersQuery.data.registeredByCarriedCount} carried`
+                            : ""
+                        }`
+                      : ""
                   }`
                 : null}
             </DialogDescription>
@@ -3709,15 +4290,28 @@ export function GameOperations() {
                       </Badge>
                     </div>
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {player.cartelas.map((cartela) => (
-                        <Badge
-                          key={cartela.gameCartelaId}
-                          variant="outline"
-                          className="font-mono tabular-nums"
-                        >
-                          #{cartela.cartelaNumber}
-                        </Badge>
-                      ))}
+                      {player.cartelas.map((cartela) => {
+                        const sourceLabel =
+                          cartela.paymentSource === "BIG_GAME_TICKET"
+                            ? "Ticket"
+                            : cartela.paymentSource === "MONEY_WALLET"
+                              ? "Money"
+                              : cartela.paymentSource === "CARRIED_FORWARD"
+                                ? "Carried"
+                                : cartela.paymentSource === "BONUS_CARTELA"
+                                  ? "Bonus"
+                                  : null;
+                        return (
+                          <Badge
+                            key={cartela.gameCartelaId}
+                            variant="outline"
+                            className="font-mono tabular-nums"
+                          >
+                            #{cartela.cartelaNumber}
+                            {sourceLabel ? ` · ${sourceLabel}` : ""}
+                          </Badge>
+                        );
+                      })}
                     </div>
                   </li>
                 ))}

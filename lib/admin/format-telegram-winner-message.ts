@@ -34,6 +34,13 @@ function circleNumber(index: number): string {
   return circles[index] ?? `${index + 1}.`;
 }
 
+function isBigGameWinner(winner: GamesReportWinner): boolean {
+  return (
+    winner.category === "BIG_GAME" ||
+    String(winner.category ?? "").toUpperCase() === "BIG_GAME"
+  );
+}
+
 /**
  * Telegram-ready plain text for community posts.
  * Uses emoji + spacing so it pastes cleanly (no bot parse-mode needed).
@@ -51,13 +58,25 @@ export function formatTelegramWinnerMessage(
     (winners.length === 1 ? first.prizeAmount : null);
   const finished = formatDateTime(first.finishedAt);
   const divider = "────────────────────";
+  const bigGame = isBigGameWinner(first);
+  const roundIndex = first.roundIndex ?? 1;
+  const roundCount = first.roundCount ?? 1;
+  const moreRoundsRemain = bigGame && roundIndex < roundCount;
 
-  const header = [
-    "🏆  FRIENDS BINGO — WINNER",
-    "",
-    `🎱  Game: ${first.gameName}`,
-    `📅  Finished: ${finished}`,
-  ];
+  const header = bigGame
+    ? [
+        "🏆  FRIENDS BINGO — BIG GAME WINNER",
+        "",
+        `🎱  Game: ${first.gameName}`,
+        `🔁  Round ${roundIndex} of ${roundCount}`,
+        `📅  Finished: ${finished}`,
+      ]
+    : [
+        "🏆  FRIENDS BINGO — WINNER",
+        "",
+        `🎱  Game: ${first.gameName}`,
+        `📅  Finished: ${finished}`,
+      ];
 
   if (sessionPrize && winners.length > 1) {
     header.push(`💎  Prize pool: ${formatCurrency(sessionPrize)}`);
@@ -80,8 +99,9 @@ export function formatTelegramWinnerMessage(
     ].join("\n");
   });
 
-  const footer =
-    winners.length > 1
+  const footer = moreRoundsRemain
+    ? "✨  Winners advance — next round registration is open! 🎉"
+    : winners.length > 1
       ? "✨  Congratulations to all winners! 🎉"
       : "✨  Congratulations! 🎉";
 

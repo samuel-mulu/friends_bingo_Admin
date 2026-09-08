@@ -135,6 +135,26 @@ export function buildCreateGameRequestBody(payload: CreateGamePayload) {
     body.playStartAt = payload.playStartAt;
   }
 
+  if (payload.roundCount != null) {
+    body.roundCount = payload.roundCount;
+  }
+
+  if (payload.roundPrizes != null) {
+    body.roundPrizes = payload.roundPrizes;
+  }
+
+  if (payload.interRoundDelaySeconds != null) {
+    body.interRoundDelaySeconds = payload.interRoundDelaySeconds;
+  }
+
+  if (payload.forceBigGameEnabled != null) {
+    body.forceBigGameEnabled = payload.forceBigGameEnabled;
+  }
+
+  if (payload.forceBigGameCartelaCount != null) {
+    body.forceBigGameCartelaCount = payload.forceBigGameCartelaCount;
+  }
+
   if (payload.operationMode) {
     body.operationMode = payload.operationMode;
   }

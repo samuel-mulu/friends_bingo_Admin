@@ -548,6 +548,15 @@ export function GamesReportView() {
                                     ? ` · ${winnersInGame} winners`
                                     : ""}
                                 </div>
+                                {(winner.category === "BIG_GAME" ||
+                                  String(winner.category ?? "").toUpperCase() ===
+                                    "BIG_GAME") &&
+                                (winner.roundCount ?? 1) > 1 ? (
+                                  <div className="text-xs font-medium text-violet-800">
+                                    Round {winner.roundIndex ?? 1} of{" "}
+                                    {winner.roundCount ?? 1}
+                                  </div>
+                                ) : null}
                               </div>
                             </TableCell>
                             <TableCell>{winner.gameType}</TableCell>

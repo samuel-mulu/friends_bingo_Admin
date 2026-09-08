@@ -52,6 +52,9 @@ type ClaimGameGroup = {
   ruleKey: string;
   gameType: string;
   isManualRule: boolean;
+  isBigGame: boolean;
+  roundIndex: number;
+  roundCount: number | null;
   latestCreatedAt: string;
   claims: AdminBingoClaim[];
   pendingCount: number;
@@ -94,6 +97,11 @@ function groupClaimsByGame(claims: AdminBingoClaim[]): ClaimGameGroup[] {
       ruleKey: rule?.key ?? first.checkedPattern ?? slot.gameType,
       gameType: slot.gameType,
       isManualRule,
+      isBigGame:
+        slot.category === "BIG_GAME" ||
+        String(slot.category ?? "").toUpperCase() === "BIG_GAME",
+      roundIndex: first.gameSession.roundIndex ?? 1,
+      roundCount: slot.roundCount ?? null,
       latestCreatedAt: sorted[0]?.createdAt ?? first.createdAt,
       claims: sorted,
       pendingCount: sessionClaims.filter((claim) => claim.status === "PENDING")
@@ -265,6 +273,14 @@ export function BingoClaimsManagement() {
                                 <span className="block text-xs text-muted-foreground">
                                   Slot {group.slotName} · {group.ruleName}
                                 </span>
+                                {group.isBigGame ? (
+                                  <span className="block text-xs font-medium text-violet-800">
+                                    Round {group.roundIndex}
+                                    {group.roundCount != null
+                                      ? ` of ${group.roundCount}`
+                                      : ""}
+                                  </span>
+                                ) : null}
                                 <span className="block text-xs text-muted-foreground">
                                   Prize {formatCurrency(group.prizeAmount)}
                                 </span>

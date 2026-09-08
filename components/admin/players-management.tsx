@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Ban,
   Check,
   Copy,
   Eye,
@@ -10,14 +11,20 @@ import {
   MessageSquare,
   ReceiptText,
   Search,
+  ShieldCheck,
   Smartphone,
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
 
-import { getAdminUserById, getAdminUsers } from "@/lib/api/admin";
+import {
+  getAdminUserById,
+  getAdminUsers,
+  updateAdminUserStatus,
+} from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { adminToast } from "@/lib/admin/admin-toast";
+import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
 import {
   coerceMoneyAmount,
   formatCurrency,
@@ -30,6 +37,7 @@ import {
   AdminEmptyState,
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
+import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { PlayerGameHistoryDialog } from "@/components/admin/player-game-history-dialog";
 import { PlayerSendFeedbackDialog } from "@/components/admin/player-send-feedback-dialog";
 import { PlayerTransactionHistoryDialog } from "@/components/admin/player-transaction-history-dialog";
@@ -95,6 +103,15 @@ export function PlayersManagement() {
     id: string;
     name: string;
   } | null>(null);
+  const [banTarget, setBanTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [unbanTarget, setUnbanTarget] = useState<{
+    id: string;
+    name: string;
+    reason: string | null;
+  } | null>(null);
   const [selectedPhoneIds, setSelectedPhoneIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -129,6 +146,35 @@ export function PlayersManagement() {
       : ["admin", "users", "detail"],
     queryFn: () => getAdminUserById(selectedUserId as string),
     enabled: Boolean(selectedUserId),
+  });
+
+  const banMutation = useAdminMutation({
+    mutationFn: ({
+      userId,
+      reason,
+    }: {
+      userId: string;
+      reason: string;
+    }) =>
+      updateAdminUserStatus(userId, {
+        status: "BLOCKED",
+        reason,
+      }),
+    successMessage: "Player banned",
+    invalidateQueryKeys: [["admin", "users"]],
+    onSuccess: () => {
+      setBanTarget(null);
+    },
+  });
+
+  const unbanMutation = useAdminMutation({
+    mutationFn: ({ userId }: { userId: string }) =>
+      updateAdminUserStatus(userId, { status: "ACTIVE" }),
+    successMessage: "Player unbanned",
+    invalidateQueryKeys: [["admin", "users"]],
+    onSuccess: () => {
+      setUnbanTarget(null);
+    },
   });
 
   const pageUsers = usersQuery.data?.items ?? [];
@@ -512,6 +558,25 @@ export function PlayersManagement() {
                       label="Updated"
                       value={formatDateTime(userDetailQuery.data.updatedAt)}
                     />
+                    {userDetailQuery.data.status === "BLOCKED" ? (
+                      <>
+                        <DetailItem
+                          label="Ban reason"
+                          value={
+                            userDetailQuery.data.blockReason?.trim() ||
+                            "No reason provided"
+                          }
+                        />
+                        <DetailItem
+                          label="Banned at"
+                          value={
+                            userDetailQuery.data.blockedAt
+                              ? formatDateTime(userDetailQuery.data.blockedAt)
+                              : "—"
+                          }
+                        />
+                      </>
+                    ) : null}
                   </CardContent>
                 </Card>
 
@@ -598,12 +663,106 @@ export function PlayersManagement() {
                     <ReceiptText className="size-4" />
                     Transactions
                   </Button>
+                  {userDetailQuery.data.role === "PLAYER" &&
+                  userDetailQuery.data.status === "ACTIVE" ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() =>
+                        setBanTarget({
+                          id: userDetailQuery.data.id,
+                          name: userDetailQuery.data.fullName,
+                        })
+                      }
+                    >
+                      <Ban className="size-4" />
+                      Ban player
+                    </Button>
+                  ) : null}
+                  {userDetailQuery.data.role === "PLAYER" &&
+                  userDetailQuery.data.status === "BLOCKED" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        setUnbanTarget({
+                          id: userDetailQuery.data.id,
+                          name: userDetailQuery.data.fullName,
+                          reason: userDetailQuery.data.blockReason,
+                        })
+                      }
+                    >
+                      <ShieldCheck className="size-4" />
+                      Unban player
+                    </Button>
+                  ) : null}
                 </div>
               </>
             )}
           </div>
         </SheetContent>
       </Sheet>
+
+      <ConfirmActionDialog
+        open={Boolean(banTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBanTarget(null);
+          }
+        }}
+        title="Ban player"
+        description={
+          banTarget
+            ? `Ban ${banTarget.name}. They will be kicked immediately and shown this reason with support contact details.`
+            : "Ban this player."
+        }
+        confirmLabel="Ban player"
+        confirmVariant="destructive"
+        field={{
+          label: "Ban reason",
+          placeholder: "Explain why this player is being banned",
+          required: true,
+        }}
+        onConfirm={(value) => {
+          if (!banTarget || !value?.trim()) {
+            return;
+          }
+
+          banMutation.mutate({
+            userId: banTarget.id,
+            reason: value.trim(),
+          });
+        }}
+        isPending={banMutation.isPending}
+      />
+
+      <ConfirmActionDialog
+        open={Boolean(unbanTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUnbanTarget(null);
+          }
+        }}
+        title="Unban player"
+        description={
+          unbanTarget
+            ? `Restore access for ${unbanTarget.name}${
+                unbanTarget.reason
+                  ? ` (previously banned: ${unbanTarget.reason})`
+                  : ""
+              }.`
+            : "Unban this player."
+        }
+        confirmLabel="Unban player"
+        onConfirm={() => {
+          if (!unbanTarget) {
+            return;
+          }
+
+          unbanMutation.mutate({ userId: unbanTarget.id });
+        }}
+        isPending={unbanMutation.isPending}
+      />
 
       <PlayerSendFeedbackDialog
         userId={feedbackTarget?.id ?? null}

@@ -121,12 +121,24 @@ export interface GameOperationItem {
   isBigGame?: boolean;
   fixedPrizeAmount?: string | null;
   maxCartelasPerPlayer?: number | null;
+  roundCount?: number;
+  roundPrizes?: string[] | null;
+  interRoundDelaySeconds?: number | null;
+  currentRound?: number;
+  roundIndex?: number;
+  roundPrizeAmount?: string | null;
+  nextRoundStartsAt?: string | null;
+  forceBigGameEnabled?: boolean;
+  forceBigGameCartelaCount?: number | null;
   entryFee: string;
   prizePerCartela: string;
   companyFeePerCartela?: string;
   prizeAmount: string;
   companyRevenue?: string;
   registeredCartelasCount: number;
+  registeredByMoneyCount?: number;
+  registeredByTicketCount?: number;
+  registeredByCarriedCount?: number;
   calledNumbersCount: number;
   sortOrder: number | null;
   operationMode: "MANUAL" | "AUTO";
@@ -172,6 +184,7 @@ export interface GameOperationsCurrentResponse {
     sessionId: string;
     phase: "live" | "held";
   };
+  bigGameNextRegistration?: BigGameNextRegistrationSummary;
 }
 
 export function getCurrentGameOperations() {
@@ -193,8 +206,18 @@ export interface CurrentBigGameResponse {
   prizeAmount: string;
   fixedPrizeAmount: string | null;
   registeredCartelasCount: number;
+  registeredByMoneyCount?: number;
+  registeredByTicketCount?: number;
+  registeredByCarriedCount?: number;
   registrationOpensAt: string | null;
   scheduledStartAt: string | null;
+  roundCount?: number;
+  roundPrizes?: string[] | null;
+  interRoundDelaySeconds?: number | null;
+  currentRound?: number;
+  roundIndex?: number;
+  roundPrizeAmount?: string | null;
+  nextRoundStartsAt?: string | null;
   heldWaitingForLiveSlot?: boolean;
   blockingLiveGame?: {
     sessionId: string;
@@ -202,6 +225,49 @@ export interface CurrentBigGameResponse {
     playCode: string | null;
     playerStatus: string;
   };
+  previousRound?: {
+    sessionId: string;
+    roundIndex: number;
+    status: string;
+    playCode: string | null;
+    finishedAt: string | null;
+    registeredCartelasCount: number;
+    playerOwnedPreviousRound: boolean;
+    winners?: Array<{
+      userId: string;
+      fullName: string;
+      cartelaNumber: number;
+      amount: string;
+    }>;
+  };
+  finishedRounds?: Array<{
+    sessionId: string;
+    roundIndex: number;
+    status: string;
+    playCode: string | null;
+    finishedAt: string | null;
+    prizeAmount: string;
+    winners: Array<{
+      userId: string;
+      fullName: string;
+      cartelaNumber: number;
+      amount: string;
+    }>;
+  }>;
+  /** READY next round while this (live) round is still playing. */
+  nextRoundRegistration?: CurrentBigGameResponse | null;
+}
+
+export interface BigGameNextRegistrationSummary {
+  sessionId: string;
+  slotId: string;
+  roundIndex: number;
+  roundCount: number | null;
+  scheduledStartAt: string | null;
+  registrationOpensAt: string | null;
+  registeredCartelasCount: number;
+  playCode: string;
+  staticCode: string;
 }
 
 export function getCurrentBigGame() {
@@ -383,6 +449,17 @@ export function getAdminUserById(userId: string) {
   });
 }
 
+export function updateAdminUserStatus(
+  userId: string,
+  payload: { status: "ACTIVE" | "BLOCKED"; reason?: string },
+) {
+  return apiRequest<AdminUserDetail>({
+    url: `/admin/users/${userId}/status`,
+    method: "PATCH",
+    data: payload,
+  });
+}
+
 export function getAdminUserFinancialHistory(userId: string) {
   return apiRequest<AdminUserFinancialHistory>({
     url: `/admin/users/${userId}/financial-history`,
@@ -436,6 +513,12 @@ export type SessionRegisteredCartela = {
   cartelaNumber: number;
   status: string;
   isWinner: boolean;
+  paymentSource?:
+    | "MONEY_WALLET"
+    | "BONUS_CARTELA"
+    | "BIG_GAME_TICKET"
+    | "CARRIED_FORWARD"
+    | null;
   blockedAt: string | null;
   blockReason: string | null;
   blockCheckedAt: string | null;
@@ -468,6 +551,9 @@ export type SessionRegisteredPlayersResponse = {
   staticCode: string;
   gameName: string;
   registeredCartelasCount: number;
+  registeredByMoneyCount?: number;
+  registeredByTicketCount?: number;
+  registeredByCarriedCount?: number;
   playersCount: number;
   players: SessionRegisteredPlayer[];
 };
@@ -552,6 +638,25 @@ export function updateAdminBigGameSchedule(
     url: `/admin/slots/${slotId}/big-game-schedule`,
     method: "PATCH",
     data: payload,
+  });
+}
+
+export function startAdminBigGameNextRound(slotId: string) {
+  return apiRequest<{
+    sessionId: string;
+    roundIndex: number;
+    clonedCount: number;
+    actorId: string | null;
+  }>({
+    url: `/admin/slots/${slotId}/big-game/start-next-round`,
+    method: "POST",
+  });
+}
+
+export function startAdminBigGameNow(slotId: string) {
+  return apiRequest<AdminGame>({
+    url: `/admin/slots/${slotId}/big-game/start-now`,
+    method: "POST",
   });
 }
 

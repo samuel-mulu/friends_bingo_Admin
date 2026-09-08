@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { getCurrentBigGame, getOverviewReport } from "@/lib/api/admin";
+import { bigGameQueryKey } from "@/lib/admin/game-operations-cache";
 import { ApiError } from "@/lib/api/client";
 import type { OverviewReport } from "@/lib/api/types";
 import { formatCurrency } from "@/lib/formatters";
@@ -40,7 +41,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
 const overviewQueryKey = ["admin", "reports", "overview"] as const;
-const bigGameQueryKey = ["admin", "big-game", "current"] as const;
 
 export function DashboardOverview() {
   const overviewQuery = useQuery({
@@ -81,7 +81,10 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
   const bigGameQuery = useQuery({
     queryKey: bigGameQueryKey,
     queryFn: getCurrentBigGame,
-    staleTime: 2_000,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
   });
 
   const chartData = useMemo(
@@ -127,7 +130,8 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
                     {bigGameQuery.data.blockingLiveGame?.staticCode ??
                       "the current live game"}
                   </strong>{" "}
-                  to release the slot.
+                  to release the slot. After it clears, Big Game auto-starts — or
+                  use <strong>Start Big Game now</strong> on Games.
                 </CardDescription>
               </div>
             </div>

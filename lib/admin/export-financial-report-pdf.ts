@@ -129,10 +129,7 @@ export function exportFinancialReportPdf(input: FinancialReportPdfInput) {
       ["Prize paid total", formatCurrency(report.prizePaidTotal)],
       ["Bonus game prizes", formatCurrency(report.bonusGamePrizePaidTotal)],
       ["Expenses total", formatCurrency(report.expensesTotal)],
-      [
-        "Net revenue (money entries − all prizes)",
-        formatCurrency(report.netRevenue),
-      ],
+      ["Net revenue", formatCurrency(report.netRevenue)],
       ["Profit net", formatCurrency(report.profitNet)],
       ["Transaction count", String(report.transactionCount)],
       ["Registered cartelas", String(report.registeredCartelasCount)],
@@ -160,6 +157,47 @@ export function exportFinancialReportPdf(input: FinancialReportPdfInput) {
     margin: { left: 14, right: 14 },
   });
   y = (doc.lastAutoTable?.finalY ?? y) + 10;
+
+  if (report.revenueBreakdown) {
+    y = drawSectionTitle(doc, "Revenue breakdown", y);
+    autoTable(doc, {
+      startY: y,
+      head: [["Component", "Amount"]],
+      body: [
+        [
+          "Normal commission",
+          formatCurrency(report.revenueBreakdown.normalCommission),
+        ],
+        [
+          "Bonus prize cost",
+          `−${formatCurrency(report.revenueBreakdown.bonusPrizeCost)}`,
+        ],
+        ["BIG GOTD net", formatCurrency(report.revenueBreakdown.bigGotdNet)],
+        ["BIG GAME net", formatCurrency(report.revenueBreakdown.bigGameNet)],
+      ],
+      theme: "plain",
+      styles: {
+        font: "helvetica",
+        fontSize: 9,
+        cellPadding: 2.4,
+        textColor: [30, 41, 59],
+      },
+      headStyles: {
+        fillColor: BRAND.primary,
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      columnStyles: {
+        0: { cellWidth: 90 },
+        1: { cellWidth: 92, halign: "right" },
+      },
+      margin: { left: 14, right: 14 },
+    });
+    y = (doc.lastAutoTable?.finalY ?? y) + 10;
+  }
 
   // Settlement breakdown
   if (report.settlementBreakdown.length > 0) {

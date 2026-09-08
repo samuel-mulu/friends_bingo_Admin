@@ -140,9 +140,16 @@ export function exportGamesReportPdf(input: GamesReportPdfInput) {
           winnersInGame > 1
             ? `${winner.gameName}\n${winner.gameCode} · ${winnersInGame} winners`
             : `${winner.gameName}\n${winner.gameCode}`;
+        const isBigGame =
+          winner.category === "BIG_GAME" ||
+          String(winner.category ?? "").toUpperCase() === "BIG_GAME";
+        const roundLabel =
+          isBigGame && (winner.roundCount ?? 1) > 1
+            ? `\nRound ${winner.roundIndex ?? 1} of ${winner.roundCount ?? 1}`
+            : "";
 
         return [
-          gameLabel,
+          `${gameLabel}${roundLabel}`,
           winner.gameType,
           winner.winnerUser?.fullName ?? "Unknown",
           winner.winnerUser?.phoneNumber ?? "—",

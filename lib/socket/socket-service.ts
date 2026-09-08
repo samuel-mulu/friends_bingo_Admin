@@ -26,12 +26,19 @@ export class SocketService {
 
     this.socket = io(`${socketBaseUrl}/realtime`, {
       path: "/socket.io",
-      transports: ["polling", "websocket"],
+      // Prefer websocket so long-polling XHR does not compete with heavy HTTP
+      // admin polls when the API event loop is busy.
+      transports: ["websocket", "polling"],
+      upgrade: true,
+      rememberUpgrade: true,
+      timeout: 20_000,
       auth: { token: normalizedToken },
       autoConnect: false,
       forceNew: true,
       multiplex: false,
       reconnection: true,
+      reconnectionDelay: 1_000,
+      reconnectionDelayMax: 8_000,
     });
 
     this.socket.on("connect", () => {
@@ -45,7 +52,11 @@ export class SocketService {
     });
 
     this.socket.on("connect_error", (error: Error) => {
-      console.error("[Socket] Connection error:", error);
+      // xhr poll errors are expected while reconnecting under API load —
+      // avoid noisy red console spam; disconnect listener already drives UI.
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[Socket] Connection error:", error.message);
+      }
       this.notifyConnectionListeners(false);
     });
 

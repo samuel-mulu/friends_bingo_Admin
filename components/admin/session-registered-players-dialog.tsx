@@ -51,6 +51,23 @@ type CalledNumberBall = {
   order: number;
 };
 
+function paymentSourceLabel(
+  source: SessionRegisteredCartela["paymentSource"],
+): string | null {
+  switch (source) {
+    case "BIG_GAME_TICKET":
+      return "Ticket";
+    case "MONEY_WALLET":
+      return "Money";
+    case "CARRIED_FORWARD":
+      return "Carried";
+    case "BONUS_CARTELA":
+      return "Bonus";
+    default:
+      return null;
+  }
+}
+
 function isBlockedCartela(cartela: SessionRegisteredCartela) {
   return Boolean(cartela.blockedAt) || cartela.status === "BLOCKED";
 }
@@ -151,6 +168,16 @@ export function SessionRegisteredPlayersDialog({
                     playersQuery.data.playersCount === 1 ? "" : "s"
                   } · ${playersQuery.data.registeredCartelasCount} cartela${
                     playersQuery.data.registeredCartelasCount === 1 ? "" : "s"
+                  }${
+                    typeof playersQuery.data.registeredByMoneyCount ===
+                      "number" ||
+                    typeof playersQuery.data.registeredByTicketCount === "number"
+                      ? ` · ${playersQuery.data.registeredByMoneyCount ?? 0} money · ${playersQuery.data.registeredByTicketCount ?? 0} ticket${
+                          (playersQuery.data.registeredByCarriedCount ?? 0) > 0
+                            ? ` · ${playersQuery.data.registeredByCarriedCount} carried`
+                            : ""
+                        }`
+                      : ""
                   }`
                 : null}
             </DialogDescription>
@@ -260,6 +287,9 @@ export function SessionRegisteredPlayersDialog({
                           }
                         >
                           #{cartela.cartelaNumber}
+                          {paymentSourceLabel(cartela.paymentSource)
+                            ? ` · ${paymentSourceLabel(cartela.paymentSource)}`
+                            : ""}
                         </button>
                       ))}
                     </div>
