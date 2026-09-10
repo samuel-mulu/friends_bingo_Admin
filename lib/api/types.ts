@@ -514,11 +514,13 @@ export interface CreateGamePayload {
   roundCount?: number;
   /** BIG_GAME: prize per round; length must equal roundCount; sum must equal fixedPrizeAmount. */
   roundPrizes?: string[];
+  /** BIG_GAME: GameRule id per round; length must equal roundCount; [0] must equal gameRuleId. */
+  roundGameRuleIds?: string[];
   /** BIG_GAME: delay before auto-starting the next round when roundCount > 1. */
   interRoundDelaySeconds?: number;
-  /** NORMAL / BIG_GOTD: force-grant Big Tickets from winner prizes into the active Big Game. */
+  /** NORMAL / BONUS / BIG_GOTD: force-grant Big Tickets from winner prizes into the active Big Game. */
   forceBigGameEnabled?: boolean;
-  /** NORMAL / BIG_GOTD: Big Tickets to grant per winning cartela when forceBigGameEnabled. */
+  /** NORMAL / BONUS / BIG_GOTD: total Big Tickets pool (1 winner gets all; 2 winners split; 3+ get none). Even integer 2–10. */
   forceBigGameCartelaCount?: number;
   operationMode?: GameOperationMode;
   registrationDurationSeconds?: number;

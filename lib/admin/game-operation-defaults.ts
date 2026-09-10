@@ -143,6 +143,10 @@ export function buildCreateGameRequestBody(payload: CreateGamePayload) {
     body.roundPrizes = payload.roundPrizes;
   }
 
+  if (payload.roundGameRuleIds != null) {
+    body.roundGameRuleIds = payload.roundGameRuleIds;
+  }
+
   if (payload.interRoundDelaySeconds != null) {
     body.interRoundDelaySeconds = payload.interRoundDelaySeconds;
   }

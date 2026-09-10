@@ -123,6 +123,7 @@ export interface GameOperationItem {
   maxCartelasPerPlayer?: number | null;
   roundCount?: number;
   roundPrizes?: string[] | null;
+  roundGameRuleIds?: string[] | null;
   interRoundDelaySeconds?: number | null;
   currentRound?: number;
   roundIndex?: number;
@@ -213,6 +214,7 @@ export interface CurrentBigGameResponse {
   scheduledStartAt: string | null;
   roundCount?: number;
   roundPrizes?: string[] | null;
+  roundGameRuleIds?: string[] | null;
   interRoundDelaySeconds?: number | null;
   currentRound?: number;
   roundIndex?: number;

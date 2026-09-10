@@ -162,14 +162,34 @@ function computePrizePerCartelaFromEconomics(
 }
 
 function resizeRoundPrizeDrafts(prizes: string[], count: number): string[] {
-  const safeCount = Math.max(1, Math.min(10, count));
-  if (prizes.length === safeCount) {
+  if (count <= 0) {
+    return [];
+  }
+  if (prizes.length === count) {
     return prizes;
   }
-  if (prizes.length > safeCount) {
-    return prizes.slice(0, safeCount);
+  if (prizes.length > count) {
+    return prizes.slice(0, count);
   }
-  return [...prizes, ...Array.from({ length: safeCount - prizes.length }, () => "")];
+  return [...prizes, ...Array.from({ length: count - prizes.length }, () => "")];
+}
+
+function resizeRoundRuleDrafts(
+  ruleIds: string[],
+  count: number,
+  fallbackRuleId: string,
+): string[] {
+  if (count <= 0) {
+    return [];
+  }
+  const next = ruleIds.slice(0, count);
+  while (next.length < count) {
+    next.push(fallbackRuleId || next[0] || "");
+  }
+  if (fallbackRuleId && !next[0]) {
+    next[0] = fallbackRuleId;
+  }
+  return next;
 }
 
 function sumMoneyDrafts(values: string[]): number | null {
@@ -424,10 +444,11 @@ export function GameOperations() {
   const [bigGamePlayStartAt, setBigGamePlayStartAt] = useState("");
   const [bigGameRoundCount, setBigGameRoundCount] = useState("1");
   const [bigGameRoundPrizes, setBigGameRoundPrizes] = useState<string[]>([""]);
+  const [bigGameRoundRuleIds, setBigGameRoundRuleIds] = useState<string[]>([]);
   const [bigGameInterRoundDelaySeconds, setBigGameInterRoundDelaySeconds] =
     useState("300");
   const [forceBigGameEnabled, setForceBigGameEnabled] = useState(false);
-  const [forceBigGameCartelaCount, setForceBigGameCartelaCount] = useState("1");
+  const [forceBigGameCartelaCount, setForceBigGameCartelaCount] = useState("2");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
   const [normalEntryFeeDraft, setNormalEntryFeeDraft] = useState(
     FALLBACK_NORMAL_ENTRY_FEE,
@@ -3445,9 +3466,10 @@ export function GameOperations() {
             setBigGamePlayStartAt("");
             setBigGameRoundCount("1");
             setBigGameRoundPrizes([""]);
+            setBigGameRoundRuleIds([]);
             setBigGameInterRoundDelaySeconds("300");
             setForceBigGameEnabled(false);
-            setForceBigGameCartelaCount("1");
+            setForceBigGameCartelaCount("2");
           }
         }}
       >
@@ -3500,8 +3522,30 @@ export function GameOperations() {
             </div>
 
             <div className="space-y-2">
-              <Label>Game rule</Label>
-              <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
+              <Label>
+                {createGameCategory === "BIG_GAME" &&
+                Number(bigGameRoundCount) > 1
+                  ? "Default game rule (Round 1)"
+                  : "Game rule"}
+              </Label>
+              <Select
+                value={selectedRuleId}
+                onValueChange={(value) => {
+                  setSelectedRuleId(value);
+                  setBigGameRoundRuleIds((current) => {
+                    if (Number(bigGameRoundCount) <= 1) {
+                      return [value];
+                    }
+                    const resized = resizeRoundRuleDrafts(
+                      current,
+                      Number(bigGameRoundCount),
+                      value,
+                    );
+                    resized[0] = value;
+                    return resized;
+                  });
+                }}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a game rule" />
                 </SelectTrigger>
@@ -3659,6 +3703,13 @@ export function GameOperations() {
                         setBigGameRoundPrizes((current) =>
                           resizeRoundPrizeDrafts(current, nextCount),
                         );
+                        setBigGameRoundRuleIds((current) =>
+                          resizeRoundRuleDrafts(
+                            current,
+                            nextCount,
+                            selectedRuleId,
+                          ),
+                        );
                       }
                     }}
                   />
@@ -3681,27 +3732,76 @@ export function GameOperations() {
                       />
                     </div>
                     <div className="space-y-3 sm:col-span-2">
-                      <Label>Round prizes (must sum to prize pool)</Label>
-                      <div className="grid gap-3 sm:grid-cols-2">
+                      <Label>Round prize and game rule</Label>
+                      <div className="grid gap-3">
                         {bigGameRoundPrizes.map((prize, index) => (
-                          <div key={`round-prize-${index}`} className="space-y-2">
-                            <Label htmlFor={`big-game-round-prize-${index}`}>
-                              Round {index + 1} prize
-                            </Label>
-                            <Input
-                              id={`big-game-round-prize-${index}`}
-                              inputMode="decimal"
-                              placeholder="0"
-                              value={prize}
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                setBigGameRoundPrizes((current) =>
-                                  current.map((item, itemIndex) =>
-                                    itemIndex === index ? value : item,
-                                  ),
-                                );
-                              }}
-                            />
+                          <div
+                            key={`round-config-${index}`}
+                            className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2"
+                          >
+                            <div className="space-y-2">
+                              <Label htmlFor={`big-game-round-prize-${index}`}>
+                                Round {index + 1} prize
+                              </Label>
+                              <Input
+                                id={`big-game-round-prize-${index}`}
+                                inputMode="decimal"
+                                placeholder="0"
+                                value={prize}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setBigGameRoundPrizes((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index ? value : item,
+                                    ),
+                                  );
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`big-game-round-rule-${index}`}>
+                                Round {index + 1} game rule
+                              </Label>
+                              <Select
+                                value={
+                                  bigGameRoundRuleIds[index] ||
+                                  selectedRuleId ||
+                                  ""
+                                }
+                                onValueChange={(value) => {
+                                  setBigGameRoundRuleIds((current) => {
+                                    const resized = resizeRoundRuleDrafts(
+                                      current,
+                                      Number(bigGameRoundCount) ||
+                                        bigGameRoundPrizes.length,
+                                      selectedRuleId,
+                                    );
+                                    resized[index] = value;
+                                    if (index === 0) {
+                                      setSelectedRuleId(value);
+                                    }
+                                    return resized;
+                                  });
+                                }}
+                              >
+                                <SelectTrigger
+                                  id={`big-game-round-rule-${index}`}
+                                  className="w-full"
+                                >
+                                  <SelectValue placeholder="Select rule" />
+                                </SelectTrigger>
+                                <SelectContent
+                                  position="popper"
+                                  className="z-[100] max-h-60"
+                                >
+                                  {activeGameRules.map((rule) => (
+                                    <SelectItem key={rule.id} value={rule.id}>
+                                      {rule.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3712,6 +3812,7 @@ export function GameOperations() {
             ) : null}
 
             {createGameCategory === "NORMAL" ||
+            createGameCategory === "BONUS" ||
             createGameCategory === "BIG_GOTD" ? (
               <div className="space-y-3 rounded-md border border-border p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -3721,7 +3822,7 @@ export function GameOperations() {
                     </Label>
                     <p className="text-xs text-muted-foreground">
                       {hasActiveBigGame
-                        ? "Grant Big Tickets from this game's winners into the scheduled Big Game."
+                        ? "Total Big Tickets from this game's winners into the scheduled Big Game (1 winner gets all; 2 winners split; 3+ get none)."
                         : "Requires an active/scheduled Big Game."}
                     </p>
                   </div>
@@ -3742,13 +3843,14 @@ export function GameOperations() {
                 {forceBigGameEnabled && hasActiveBigGame ? (
                   <div className="space-y-2">
                     <Label htmlFor="force-big-game-cartela-count">
-                      Big Tickets per winning cartela
+                      Total Big Tickets
                     </Label>
                     <Input
                       id="force-big-game-cartela-count"
                       type="number"
-                      min={1}
+                      min={2}
                       max={10}
+                      step={2}
                       value={forceBigGameCartelaCount}
                       onChange={(event) =>
                         setForceBigGameCartelaCount(event.target.value)
@@ -3873,6 +3975,32 @@ export function GameOperations() {
                     }
                   }
 
+                  const roundGameRuleIds =
+                    roundCount > 1
+                      ? resizeRoundRuleDrafts(
+                          bigGameRoundRuleIds,
+                          roundCount,
+                          selectedRuleId,
+                        )
+                      : undefined;
+
+                  if (roundCount > 1) {
+                    if (
+                      !roundGameRuleIds ||
+                      roundGameRuleIds.some((value) => !value)
+                    ) {
+                      setCreateGameError(
+                        "Select a game rule for every Big Game round.",
+                      );
+                      return;
+                    }
+                  }
+
+                  const primaryGameRuleId =
+                    roundCount > 1 && roundGameRuleIds
+                      ? roundGameRuleIds[0]
+                      : selectedRuleId;
+
                   const interRoundDelaySeconds =
                     roundCount > 1
                       ? Number(bigGameInterRoundDelaySeconds)
@@ -3915,7 +4043,7 @@ export function GameOperations() {
                   lastCreateCategoryRef.current = "BIG_GAME";
                   createGame.mutate({
                     payload: {
-                      gameRuleId: selectedRuleId,
+                      gameRuleId: primaryGameRuleId,
                       category: "BIG_GAME",
                       entryFee: bigGameEntryFee.trim(),
                       fixedPrizeAmount: bigGameFixedPrizeAmount.trim(),
@@ -3927,6 +4055,7 @@ export function GameOperations() {
                       ...(roundCount > 1
                         ? {
                             roundPrizes,
+                            roundGameRuleIds,
                             interRoundDelaySeconds,
                           }
                         : {}),
@@ -3937,6 +4066,7 @@ export function GameOperations() {
 
                 if (
                   (createGameCategory === "NORMAL" ||
+                    createGameCategory === "BONUS" ||
                     createGameCategory === "BIG_GOTD") &&
                   forceBigGameEnabled
                 ) {
@@ -3950,11 +4080,12 @@ export function GameOperations() {
                   const forceCount = Number(forceBigGameCartelaCount);
                   if (
                     !Number.isInteger(forceCount) ||
-                    forceCount < 1 ||
-                    forceCount > 10
+                    forceCount < 2 ||
+                    forceCount > 10 ||
+                    forceCount % 2 !== 0
                   ) {
                     setCreateGameError(
-                      "Big Tickets per winning cartela must be from 1 to 10.",
+                      "Total Big Tickets must be an even number from 2 to 10.",
                     );
                     return;
                   }
@@ -3995,6 +4126,7 @@ export function GameOperations() {
                         }
                       : {}),
                     ...(createGameCategory === "NORMAL" ||
+                    createGameCategory === "BONUS" ||
                     createGameCategory === "BIG_GOTD"
                       ? forceBigGameEnabled && hasActiveBigGame
                         ? {
