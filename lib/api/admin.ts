@@ -23,6 +23,8 @@ import type {
   CreateAdminBroadcastPayload,
   CalledNumbersResponse,
   CallNumberPayload,
+  ChainRoundResult,
+  GameCategory,
   SessionWinnerResultsResponse,
   CreateGamePayload,
   FinancialReport,
@@ -116,9 +118,10 @@ export interface GameOperationItem {
     | "cancelled";
   operationStatus: "live" | "checking" | "registration" | "queue";
   gameRule: { id: string; name: string; key: string } | null;
-  category: "NORMAL" | "BONUS" | "BIG_GOTD" | "BIG_GAME";
+  category: GameCategory;
   isBonus: boolean;
   isBigGame?: boolean;
+  isChainGame?: boolean;
   fixedPrizeAmount?: string | null;
   maxCartelasPerPlayer?: number | null;
   roundCount?: number;
@@ -129,6 +132,10 @@ export interface GameOperationItem {
   roundIndex?: number;
   roundPrizeAmount?: string | null;
   nextRoundStartsAt?: string | null;
+  /** CHAIN_GAME: set while the session is paused on a winner reveal between rounds. */
+  roundPausedUntil?: string | null;
+  /** CHAIN_GAME: every round finished so far, in round order. */
+  roundResults?: ChainRoundResult[];
   forceBigGameEnabled?: boolean;
   forceBigGameCartelaCount?: number | null;
   entryFee: string;
@@ -652,6 +659,29 @@ export function startAdminBigGameNextRound(slotId: string) {
   }>({
     url: `/admin/slots/${slotId}/big-game/start-next-round`,
     method: "POST",
+  });
+}
+
+export type ChainRoundPauseResult = {
+  success: boolean;
+  sessionId: string;
+  resumeAt: string;
+};
+
+/** Chain Game: end the inter-round pause now and resume calling. */
+export function continueAdminChainRoundNow(slotId: string) {
+  return apiRequest<ChainRoundPauseResult>({
+    url: `/admin/slots/${slotId}/chain-game/continue-now`,
+    method: "POST",
+  });
+}
+
+/** Chain Game: hold the winner reveal open for extra seconds. */
+export function extendAdminChainRoundPause(slotId: string, seconds: number) {
+  return apiRequest<ChainRoundPauseResult>({
+    url: `/admin/slots/${slotId}/chain-game/extend-pause`,
+    method: "POST",
+    data: { seconds },
   });
 }
 

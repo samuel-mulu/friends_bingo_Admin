@@ -77,6 +77,8 @@ import {
   getSessionRegisteredPlayers,
   rejectAdminBingoClaim,
   reorderAdminSlots,
+  continueAdminChainRoundNow,
+  extendAdminChainRoundPause,
   startAdminGame,
   startAdminBigGameNextRound,
   startAdminBigGameNow,
@@ -120,6 +122,7 @@ import type {
   CreateGamePayload,
   GameCategory,
   GameOperationMode,
+  GameRuleSummary,
 } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -128,6 +131,41 @@ function isBigGameOperationItem(
   item: Pick<GameOperationItem, "category" | "isBigGame"> | null | undefined,
 ): boolean {
   return Boolean(item?.isBigGame || item?.category === "BIG_GAME");
+}
+
+function isChainGameOperationItem(
+  item: Pick<GameOperationItem, "category" | "isChainGame"> | null | undefined,
+): boolean {
+  return Boolean(item?.isChainGame || item?.category === "CHAIN_GAME");
+}
+
+/**
+ * Presentation only — for the round badge and round prize. Never branch game
+ * lifecycle on this: Big Game creates a session per round while Chain Game plays
+ * every round inside one session.
+ */
+function isMultiRoundOperationItem(
+  item:
+    | Pick<GameOperationItem, "category" | "isBigGame" | "isChainGame">
+    | null
+    | undefined,
+): boolean {
+  return isBigGameOperationItem(item) || isChainGameOperationItem(item);
+}
+
+/** Seconds left on a Chain Game inter-round pause, or null when not paused. */
+function resolveChainPauseSecondsRemaining(
+  item: Pick<GameOperationItem, "roundPausedUntil"> | null | undefined,
+  now: number,
+): number | null {
+  if (!item?.roundPausedUntil) {
+    return null;
+  }
+  const endsAt = new Date(item.roundPausedUntil).getTime();
+  if (!Number.isFinite(endsAt)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((endsAt - now) / 1000));
 }
 
 function isBonusOperationItem(
@@ -160,6 +198,17 @@ function computePrizePerCartelaFromEconomics(
   const prize = entry - fee;
   return prize >= 0 ? prize.toFixed(2).replace(/\.00$/, "") : "0";
 }
+
+const BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS = 60;
+const BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS = 3600;
+
+/** A one-round chain is just a Big GOTD, so the backend rejects it. */
+const CHAIN_GAME_MIN_ROUND_COUNT = 2;
+const CHAIN_GAME_MIN_INTER_ROUND_DELAY_SECONDS = 5;
+const CHAIN_GAME_MAX_INTER_ROUND_DELAY_SECONDS = 300;
+const CHAIN_GAME_DEFAULT_INTER_ROUND_DELAY_SECONDS = "20";
+/** Seconds added by the live-ops "+20s" control during an inter-round pause. */
+const CHAIN_GAME_PAUSE_EXTENSION_SECONDS = 20;
 
 function resizeRoundPrizeDrafts(prizes: string[], count: number): string[] {
   if (count <= 0) {
@@ -355,6 +404,7 @@ import {
   patchOperationsForRegistration,
   patchOperationsForStatusChanged,
   patchOperationsForWinnerWindow,
+  patchOperationsForChainRound,
   patchOperationsFromCanonicalEvent,
   refetchCalledNumbersForSession,
   optimisticallyClearWaitingQueue,
@@ -437,8 +487,6 @@ export function GameOperations() {
   const [bigGotdEntryFee, setBigGotdEntryFee] = useState("");
   const [bigGameEntryFee, setBigGameEntryFee] = useState("");
   const [bigGameFixedPrizeAmount, setBigGameFixedPrizeAmount] = useState("");
-  const [bigGameMaxCartelasPerPlayer, setBigGameMaxCartelasPerPlayer] =
-    useState("20");
   const [bigGameRegistrationOpensAt, setBigGameRegistrationOpensAt] =
     useState("");
   const [bigGamePlayStartAt, setBigGamePlayStartAt] = useState("");
@@ -447,6 +495,24 @@ export function GameOperations() {
   const [bigGameRoundRuleIds, setBigGameRoundRuleIds] = useState<string[]>([]);
   const [bigGameInterRoundDelaySeconds, setBigGameInterRoundDelaySeconds] =
     useState("300");
+  const [chainGameEntryFee, setChainGameEntryFee] = useState("");
+  const [chainGameFixedPrizeAmount, setChainGameFixedPrizeAmount] =
+    useState("");
+  const [chainGameMaxCartelasPerPlayer, setChainGameMaxCartelasPerPlayer] =
+    useState("5");
+  const [chainGameRoundCount, setChainGameRoundCount] = useState(
+    String(CHAIN_GAME_MIN_ROUND_COUNT),
+  );
+  const [chainGameRoundPrizes, setChainGameRoundPrizes] = useState<string[]>(
+    Array.from({ length: CHAIN_GAME_MIN_ROUND_COUNT }, () => ""),
+  );
+  const [chainGameRoundRuleIds, setChainGameRoundRuleIds] = useState<string[]>(
+    [],
+  );
+  const [
+    chainGameInterRoundDelaySeconds,
+    setChainGameInterRoundDelaySeconds,
+  ] = useState(CHAIN_GAME_DEFAULT_INTER_ROUND_DELAY_SECONDS);
   const [forceBigGameEnabled, setForceBigGameEnabled] = useState(false);
   const [forceBigGameCartelaCount, setForceBigGameCartelaCount] = useState("2");
   const [createGameError, setCreateGameError] = useState<string | null>(null);
@@ -603,6 +669,31 @@ export function GameOperations() {
 
     return () => window.clearInterval(timer);
   }, [isWinnerWindow, currentGame?.winnerWindowEndsAt]);
+
+  const chainPausedUntil = isChainGameOperationItem(currentGame)
+    ? (currentGame?.roundPausedUntil ?? null)
+    : null;
+  const [chainPauseNow, setChainPauseNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!chainPausedUntil) {
+      return;
+    }
+
+    setChainPauseNow(Date.now());
+    const timer = window.setInterval(() => {
+      setChainPauseNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [chainPausedUntil]);
+
+  const chainPauseSecondsRemaining = chainPausedUntil
+    ? resolveChainPauseSecondsRemaining(
+        { roundPausedUntil: chainPausedUntil },
+        chainPauseNow,
+      )
+    : null;
   const focusedGame = useMemo(
     () =>
       getFocusedGameForModeSwitch({
@@ -1150,6 +1241,32 @@ export function GameOperations() {
 
   const activeGameRules = gameRules.filter((rule) => rule.isActive !== false);
 
+  /**
+   * Chain rounds share one board and never clear marks, so an easier pattern in a
+   * later round is usually already complete the moment that round starts. Rules are
+   * ordered easiest-first by sortOrder, so a drop between rounds is the signal.
+   */
+  const chainGameEasierPatternWarning = useMemo(() => {
+    if (createGameCategory !== "CHAIN_GAME") {
+      return null;
+    }
+
+    const difficultyByRuleId = new Map(
+      activeGameRules.map((rule) => [rule.id, rule.sortOrder ?? 0]),
+    );
+
+    for (let index = 1; index < chainGameRoundRuleIds.length; index += 1) {
+      const previous = difficultyByRuleId.get(chainGameRoundRuleIds[index - 1]);
+      const current = difficultyByRuleId.get(chainGameRoundRuleIds[index]);
+      if (previous == null || current == null || current >= previous) {
+        continue;
+      }
+      return `Round ${index + 1}'s pattern looks easier than round ${index}'s. Marked cells carry over between chain rounds, so players may win it instantly. Order rounds from easiest to hardest.`;
+    }
+
+    return null;
+  }, [createGameCategory, activeGameRules, chainGameRoundRuleIds]);
+
   useEffect(() => {
     if (!isCreateGameModalOpen) {
       return;
@@ -1469,6 +1586,13 @@ export function GameOperations() {
       void queryClient.invalidateQueries({ queryKey: bingoClaimsQueryKey });
     };
 
+    const handleChainRound = (payload: unknown) => {
+      logAdminGamesDebug("socket_chain_round", { payload });
+      if (!patchOperationsForChainRound(queryClient, payload)) {
+        scheduleOperationsRefresh(true);
+      }
+    };
+
     const cleanupRealtimeListeners = registerGameOperationsRealtimeListeners(
       socketService,
       {
@@ -1481,6 +1605,8 @@ export function GameOperations() {
         gameWinnerWindowJoined: handleWinnerWindow,
         gameFinished: handleTerminalSession,
         gameCancelled: handleGameCancelled,
+        chainRoundFinished: handleChainRound,
+        chainRoundStarted: handleChainRound,
         sessionPrizeUpdated: handleRegistrationMetrics,
         sessionCartelasUpdated: handleRegistrationMetrics,
         slotStatusChanged: handleSlotUpdate,
@@ -1682,6 +1808,27 @@ export function GameOperations() {
     },
     onError: () => {
       unlockTransitionUi();
+    },
+  });
+
+  const continueChainRoundNow = useAdminMutation({
+    mutationFn: (slotId: string) => continueAdminChainRoundNow(slotId),
+    successMessage: "Next round resumed.",
+    errorMessage: "Failed to resume the next round.",
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      void refreshCurrentGameOperations(queryClient);
+    },
+  });
+
+  const extendChainRoundPause = useAdminMutation({
+    mutationFn: (slotId: string) =>
+      extendAdminChainRoundPause(slotId, CHAIN_GAME_PAUSE_EXTENSION_SECONDS),
+    successMessage: `Winner reveal extended by ${CHAIN_GAME_PAUSE_EXTENSION_SECONDS}s.`,
+    errorMessage: "Failed to extend the winner reveal.",
+    invalidateQueryKeys: [],
+    onSuccess: () => {
+      void refreshCurrentGameOperations(queryClient);
     },
   });
 
@@ -2216,7 +2363,10 @@ export function GameOperations() {
                     Big Game
                   </Badge>
                 ) : null}
-                {isBigGameOperationItem(currentGame) &&
+                {isChainGameOperationItem(currentGame) ? (
+                  <Badge className="bg-teal-100 text-teal-800">Chain Game</Badge>
+                ) : null}
+                {isMultiRoundOperationItem(currentGame) &&
                 (currentGame.roundCount ?? 1) > 0 ? (
                   <Badge variant="outline" className="border-violet-300 text-violet-800">
                     Round {resolveDisplayedRoundIndex(currentGame)} of{" "}
@@ -2298,6 +2448,58 @@ export function GameOperations() {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {chainPauseSecondsRemaining != null ? (
+              <div className="flex flex-col gap-3 rounded-lg border border-teal-300 bg-teal-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-teal-900">
+                  <p className="font-medium">
+                    Round {resolveDisplayedRoundIndex(currentGame)} winner reveal
+                    — {chainPauseSecondsRemaining}s
+                  </p>
+                  <p className="text-teal-800">
+                    Calling is paused. Marks and called numbers stay on the
+                    board; round{" "}
+                    {Math.min(
+                      resolveDisplayedRoundIndex(currentGame) + 1,
+                      currentGame.roundCount ?? 1,
+                    )}{" "}
+                    resumes automatically.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <LoadingButton
+                    size="sm"
+                    variant="outline"
+                    className="border-teal-300 text-teal-900 hover:bg-teal-100"
+                    isLoading={extendChainRoundPause.isPending}
+                    loadingLabel="Extending..."
+                    disabled={!currentGame.slotId}
+                    onClick={() => {
+                      if (!currentGame.slotId) {
+                        return;
+                      }
+                      extendChainRoundPause.mutate(currentGame.slotId);
+                    }}
+                  >
+                    +{CHAIN_GAME_PAUSE_EXTENSION_SECONDS}s
+                  </LoadingButton>
+                  <LoadingButton
+                    size="sm"
+                    isLoading={continueChainRoundNow.isPending}
+                    loadingLabel="Resuming..."
+                    disabled={!currentGame.slotId}
+                    onClick={() => {
+                      if (!currentGame.slotId) {
+                        return;
+                      }
+                      continueChainRoundNow.mutate(currentGame.slotId);
+                    }}
+                  >
+                    Continue now
+                  </LoadingButton>
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               {isAutoCalling ? (
                 <Badge
@@ -2383,7 +2585,9 @@ export function GameOperations() {
               />
             ) : null}
 
-            {isWinnerWindow && currentGame.winnerWindowEndsAt && (
+            {isWinnerWindow &&
+            currentGame.winnerWindowEndsAt &&
+            chainPauseSecondsRemaining == null && (
               <div className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 text-violet-900">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -2616,6 +2820,12 @@ export function GameOperations() {
                   {isBigGotdOperationItem(standardRegistrationOpenGame) ? (
                     <Badge className="bg-yellow-200 text-yellow-950 hover:bg-yellow-200">
                       Big GOTD
+                    </Badge>
+                  ) : null}
+                  {isChainGameOperationItem(standardRegistrationOpenGame) ? (
+                    <Badge className="bg-teal-100 text-teal-800 hover:bg-teal-100">
+                      Chain Game ·{" "}
+                      {standardRegistrationOpenGame.roundCount ?? 1} rounds
                     </Badge>
                   ) : null}
                 </div>
@@ -3378,6 +3588,11 @@ export function GameOperations() {
                                 Big GOTD
                               </Badge>
                             ) : null}
+                            {isChainGameOperationItem(game) ? (
+                              <Badge className="bg-teal-100 text-teal-800 hover:bg-teal-100">
+                                Chain Game · {game.roundCount ?? 1} rounds
+                              </Badge>
+                            ) : null}
                             {game.isBigGame ? (
                               <Badge className="bg-violet-100 text-violet-900 hover:bg-violet-100">
                                 Big Game
@@ -3461,13 +3676,23 @@ export function GameOperations() {
             setBigGotdEntryFee("");
             setBigGameEntryFee("");
             setBigGameFixedPrizeAmount("");
-            setBigGameMaxCartelasPerPlayer("20");
             setBigGameRegistrationOpensAt("");
             setBigGamePlayStartAt("");
             setBigGameRoundCount("1");
             setBigGameRoundPrizes([""]);
             setBigGameRoundRuleIds([]);
             setBigGameInterRoundDelaySeconds("300");
+            setChainGameEntryFee("");
+            setChainGameFixedPrizeAmount("");
+            setChainGameMaxCartelasPerPlayer("5");
+            setChainGameRoundCount(String(CHAIN_GAME_MIN_ROUND_COUNT));
+            setChainGameRoundPrizes(
+              Array.from({ length: CHAIN_GAME_MIN_ROUND_COUNT }, () => ""),
+            );
+            setChainGameRoundRuleIds([]);
+            setChainGameInterRoundDelaySeconds(
+              CHAIN_GAME_DEFAULT_INTER_ROUND_DELAY_SECONDS,
+            );
             setForceBigGameEnabled(false);
             setForceBigGameCartelaCount("2");
           }
@@ -3476,7 +3701,9 @@ export function GameOperations() {
         <DialogContent
           className={cn(
             "flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md",
-            createGameCategory === "BIG_GAME" && "sm:max-w-lg",
+            (createGameCategory === "BIG_GAME" ||
+              createGameCategory === "CHAIN_GAME") &&
+              "sm:max-w-lg",
           )}
         >
           <DialogHeader className="shrink-0 border-b px-6 py-4 pr-12">
@@ -3484,11 +3711,13 @@ export function GameOperations() {
             <DialogDescription>
               {createGameCategory === "BIG_GAME"
                 ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time."
-                : createGameCategory === "BIG_GOTD"
-                  ? "Create a paid fixed-prize Big GOTD round. Added at the end of the standard queue; removed after it finishes or is cancelled."
-                  : createGameCategory === "BONUS"
-                    ? "Create a free fixed-prize bonus round. Added at the end of the queue; removed after it finishes or is cancelled."
-                    : "Choose a game type and active rule. Normal game economics start from Time Config and update it when you add the game."}
+                : createGameCategory === "CHAIN_GAME"
+                  ? "Create a paid multi-round game that plays every round in one continuous draw. Balls and marked cells carry over; only the pattern and prize change between rounds. Queued and auto-called like a Big GOTD."
+                  : createGameCategory === "BIG_GOTD"
+                    ? "Create a paid fixed-prize Big GOTD round. Added at the end of the standard queue; removed after it finishes or is cancelled."
+                    : createGameCategory === "BONUS"
+                      ? "Create a free fixed-prize bonus round. Added at the end of the queue; removed after it finishes or is cancelled."
+                      : "Choose a game type and active rule. Normal game economics start from Time Config and update it when you add the game."}
             </DialogDescription>
           </DialogHeader>
 
@@ -3508,6 +3737,7 @@ export function GameOperations() {
                   <SelectItem value="NORMAL">Normal Game</SelectItem>
                   <SelectItem value="BONUS">Bonus Game</SelectItem>
                   <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
+                  <SelectItem value="CHAIN_GAME">Chain Game</SelectItem>
                   <SelectItem value="BIG_GAME" disabled={hasActiveBigGame}>
                     Big Game
                     {hasActiveBigGame ? " (already scheduled)" : ""}
@@ -3523,8 +3753,9 @@ export function GameOperations() {
 
             <div className="space-y-2">
               <Label>
-                {createGameCategory === "BIG_GAME" &&
-                Number(bigGameRoundCount) > 1
+                {(createGameCategory === "BIG_GAME" &&
+                  Number(bigGameRoundCount) > 1) ||
+                createGameCategory === "CHAIN_GAME"
                   ? "Default game rule (Round 1)"
                   : "Game rule"}
               </Label>
@@ -3539,6 +3770,16 @@ export function GameOperations() {
                     const resized = resizeRoundRuleDrafts(
                       current,
                       Number(bigGameRoundCount),
+                      value,
+                    );
+                    resized[0] = value;
+                    return resized;
+                  });
+                  setChainGameRoundRuleIds((current) => {
+                    const resized = resizeRoundRuleDrafts(
+                      current,
+                      Number(chainGameRoundCount) ||
+                        CHAIN_GAME_MIN_ROUND_COUNT,
                       value,
                     );
                     resized[0] = value;
@@ -3648,21 +3889,6 @@ export function GameOperations() {
                     }
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="big-game-max-cartelas">
-                    Max cartelas per player
-                  </Label>
-                  <Input
-                    id="big-game-max-cartelas"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={bigGameMaxCartelasPerPlayer}
-                    onChange={(event) =>
-                      setBigGameMaxCartelasPerPlayer(event.target.value)
-                    }
-                  />
-                </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="big-game-registration-opens">
                     Registration opens
@@ -3715,98 +3941,156 @@ export function GameOperations() {
                   />
                 </div>
                 {Number(bigGameRoundCount) > 1 ? (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="big-game-inter-round-delay">
-                        Inter-round delay (seconds)
-                      </Label>
-                      <Input
-                        id="big-game-inter-round-delay"
-                        type="number"
-                        min={60}
-                        max={3600}
-                        value={bigGameInterRoundDelaySeconds}
-                        onChange={(event) =>
-                          setBigGameInterRoundDelaySeconds(event.target.value)
-                        }
-                      />
-                    </div>
-                    <div className="space-y-3 sm:col-span-2">
-                      <Label>Round prize and game rule</Label>
-                      <div className="grid gap-3">
-                        {bigGameRoundPrizes.map((prize, index) => (
-                          <div
-                            key={`round-config-${index}`}
-                            className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2"
-                          >
-                            <div className="space-y-2">
-                              <Label htmlFor={`big-game-round-prize-${index}`}>
-                                Round {index + 1} prize
-                              </Label>
-                              <Input
-                                id={`big-game-round-prize-${index}`}
-                                inputMode="decimal"
-                                placeholder="0"
-                                value={prize}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  setBigGameRoundPrizes((current) =>
-                                    current.map((item, itemIndex) =>
-                                      itemIndex === index ? value : item,
-                                    ),
-                                  );
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`big-game-round-rule-${index}`}>
-                                Round {index + 1} game rule
-                              </Label>
-                              <Select
-                                value={
-                                  bigGameRoundRuleIds[index] ||
-                                  selectedRuleId ||
-                                  ""
-                                }
-                                onValueChange={(value) => {
-                                  setBigGameRoundRuleIds((current) => {
-                                    const resized = resizeRoundRuleDrafts(
-                                      current,
-                                      Number(bigGameRoundCount) ||
-                                        bigGameRoundPrizes.length,
-                                      selectedRuleId,
-                                    );
-                                    resized[index] = value;
-                                    if (index === 0) {
-                                      setSelectedRuleId(value);
-                                    }
-                                    return resized;
-                                  });
-                                }}
-                              >
-                                <SelectTrigger
-                                  id={`big-game-round-rule-${index}`}
-                                  className="w-full"
-                                >
-                                  <SelectValue placeholder="Select rule" />
-                                </SelectTrigger>
-                                <SelectContent
-                                  position="popper"
-                                  className="z-[100] max-h-60"
-                                >
-                                  {activeGameRules.map((rule) => (
-                                    <SelectItem key={rule.id} value={rule.id}>
-                                      {rule.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </>
+                  <RoundConfigEditor
+                    idPrefix="big-game"
+                    roundPrizes={bigGameRoundPrizes}
+                    roundRuleIds={bigGameRoundRuleIds}
+                    fallbackRuleId={selectedRuleId}
+                    activeGameRules={activeGameRules}
+                    interRoundDelaySeconds={bigGameInterRoundDelaySeconds}
+                    minDelaySeconds={BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS}
+                    maxDelaySeconds={BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS}
+                    delayHelpText="Time between one round finishing and the next round's registration opening."
+                    onInterRoundDelayChange={setBigGameInterRoundDelaySeconds}
+                    onRoundPrizeChange={(index, value) =>
+                      setBigGameRoundPrizes((current) =>
+                        current.map((item, itemIndex) =>
+                          itemIndex === index ? value : item,
+                        ),
+                      )
+                    }
+                    onRoundRuleChange={(index, value) => {
+                      setBigGameRoundRuleIds((current) => {
+                        const resized = resizeRoundRuleDrafts(
+                          current,
+                          Number(bigGameRoundCount) ||
+                            bigGameRoundPrizes.length,
+                          selectedRuleId,
+                        );
+                        resized[index] = value;
+                        return resized;
+                      });
+                      if (index === 0) {
+                        setSelectedRuleId(value);
+                      }
+                    }}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+
+            {createGameCategory === "CHAIN_GAME" ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="chain-game-entry-fee">Entry fee (ETB)</Label>
+                  <Input
+                    id="chain-game-entry-fee"
+                    inputMode="decimal"
+                    placeholder="25"
+                    value={chainGameEntryFee}
+                    onChange={(event) =>
+                      setChainGameEntryFee(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chain-game-fixed-prize">
+                    Total prize pool (ETB)
+                  </Label>
+                  <Input
+                    id="chain-game-fixed-prize"
+                    inputMode="decimal"
+                    placeholder="5000"
+                    value={chainGameFixedPrizeAmount}
+                    onChange={(event) =>
+                      setChainGameFixedPrizeAmount(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chain-game-max-cartelas">
+                    Max cartelas per player
+                  </Label>
+                  <Input
+                    id="chain-game-max-cartelas"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={chainGameMaxCartelasPerPlayer}
+                    onChange={(event) =>
+                      setChainGameMaxCartelasPerPlayer(event.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chain-game-round-count">Rounds</Label>
+                  <Input
+                    id="chain-game-round-count"
+                    type="number"
+                    min={CHAIN_GAME_MIN_ROUND_COUNT}
+                    max={10}
+                    value={chainGameRoundCount}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setChainGameRoundCount(nextValue);
+                      const nextCount = Number(nextValue);
+                      if (
+                        Number.isInteger(nextCount) &&
+                        nextCount >= CHAIN_GAME_MIN_ROUND_COUNT &&
+                        nextCount <= 10
+                      ) {
+                        setChainGameRoundPrizes((current) =>
+                          resizeRoundPrizeDrafts(current, nextCount),
+                        );
+                        setChainGameRoundRuleIds((current) =>
+                          resizeRoundRuleDrafts(
+                            current,
+                            nextCount,
+                            selectedRuleId,
+                          ),
+                        );
+                      }
+                    }}
+                  />
+                </div>
+                <RoundConfigEditor
+                  idPrefix="chain-game"
+                  roundPrizes={chainGameRoundPrizes}
+                  roundRuleIds={chainGameRoundRuleIds}
+                  fallbackRuleId={selectedRuleId}
+                  activeGameRules={activeGameRules}
+                  interRoundDelaySeconds={chainGameInterRoundDelaySeconds}
+                  minDelaySeconds={CHAIN_GAME_MIN_INTER_ROUND_DELAY_SECONDS}
+                  maxDelaySeconds={CHAIN_GAME_MAX_INTER_ROUND_DELAY_SECONDS}
+                  delayHelpText="How long the live game pauses on the winner reveal before the next round resumes calling."
+                  onInterRoundDelayChange={setChainGameInterRoundDelaySeconds}
+                  onRoundPrizeChange={(index, value) =>
+                    setChainGameRoundPrizes((current) =>
+                      current.map((item, itemIndex) =>
+                        itemIndex === index ? value : item,
+                      ),
+                    )
+                  }
+                  onRoundRuleChange={(index, value) => {
+                    setChainGameRoundRuleIds((current) => {
+                      const resized = resizeRoundRuleDrafts(
+                        current,
+                        Number(chainGameRoundCount) ||
+                          chainGameRoundPrizes.length,
+                        selectedRuleId,
+                      );
+                      resized[index] = value;
+                      return resized;
+                    });
+                    if (index === 0) {
+                      setSelectedRuleId(value);
+                    }
+                  }}
+                />
+                {chainGameEasierPatternWarning ? (
+                  <p className="sm:col-span-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    {chainGameEasierPatternWarning}
+                  </p>
                 ) : null}
               </div>
             ) : null}
@@ -3822,7 +4106,7 @@ export function GameOperations() {
                     </Label>
                     <p className="text-xs text-muted-foreground">
                       {hasActiveBigGame
-                        ? "Total Big Tickets from this game's winners into the scheduled Big Game (1 winner gets all; 2 winners split; 3+ get none)."
+                        ? "Total Big Tickets from this game's winners into the scheduled Big Game (1 winner gets all; 2 winners split, except 1 gives 1 each; 3+ get none). Use 1, or an even number from 2 to 10."
                         : "Requires an active/scheduled Big Game."}
                     </p>
                   </div>
@@ -3848,9 +4132,9 @@ export function GameOperations() {
                     <Input
                       id="force-big-game-cartela-count"
                       type="number"
-                      min={2}
+                      min={1}
                       max={10}
-                      step={2}
+                      step={1}
                       value={forceBigGameCartelaCount}
                       onChange={(event) =>
                         setForceBigGameCartelaCount(event.target.value)
@@ -3925,14 +4209,6 @@ export function GameOperations() {
 
                   if (!bigGameFixedPrizeAmount.trim()) {
                     setCreateGameError("Enter the Big Game prize pool.");
-                    return;
-                  }
-
-                  const maxCartelas = Number(bigGameMaxCartelasPerPlayer);
-                  if (!Number.isFinite(maxCartelas) || maxCartelas < 1) {
-                    setCreateGameError(
-                      "Enter a valid max cartelas per player value.",
-                    );
                     return;
                   }
 
@@ -4047,7 +4323,6 @@ export function GameOperations() {
                       category: "BIG_GAME",
                       entryFee: bigGameEntryFee.trim(),
                       fixedPrizeAmount: bigGameFixedPrizeAmount.trim(),
-                      maxCartelasPerPlayer: maxCartelas,
                       registrationOpensAt,
                       playStartAt,
                       operationMode: "AUTO",
@@ -4059,6 +4334,124 @@ export function GameOperations() {
                             interRoundDelaySeconds,
                           }
                         : {}),
+                    },
+                  });
+                  return;
+                }
+
+                if (createGameCategory === "CHAIN_GAME") {
+                  if (!chainGameEntryFee.trim()) {
+                    setCreateGameError("Enter the Chain Game entry fee.");
+                    return;
+                  }
+
+                  if (!chainGameFixedPrizeAmount.trim()) {
+                    setCreateGameError("Enter the total prize pool.");
+                    return;
+                  }
+
+                  const maxCartelas = Number(chainGameMaxCartelasPerPlayer);
+                  if (
+                    !Number.isInteger(maxCartelas) ||
+                    maxCartelas < 1 ||
+                    maxCartelas > 100
+                  ) {
+                    setCreateGameError(
+                      "Max cartelas per player must be an integer from 1 to 100.",
+                    );
+                    return;
+                  }
+
+                  const roundCount = Number(chainGameRoundCount);
+                  if (
+                    !Number.isInteger(roundCount) ||
+                    roundCount < CHAIN_GAME_MIN_ROUND_COUNT ||
+                    roundCount > 10
+                  ) {
+                    setCreateGameError(
+                      `Chain games need between ${CHAIN_GAME_MIN_ROUND_COUNT} and 10 rounds. Use a Big GOTD for a single round.`,
+                    );
+                    return;
+                  }
+
+                  const roundPrizes = resizeRoundPrizeDrafts(
+                    chainGameRoundPrizes,
+                    roundCount,
+                  ).map((value) => value.trim());
+
+                  if (roundPrizes.some((value) => !value)) {
+                    setCreateGameError("Enter a prize for every round.");
+                    return;
+                  }
+
+                  const prizesSum = sumMoneyDrafts(roundPrizes);
+                  const prizePool = Number(chainGameFixedPrizeAmount.trim());
+                  if (
+                    prizesSum == null ||
+                    !Number.isFinite(prizePool) ||
+                    Math.round(prizesSum * 100) !== Math.round(prizePool * 100)
+                  ) {
+                    setCreateGameError(
+                      "Round prizes must sum to the total prize pool.",
+                    );
+                    return;
+                  }
+
+                  const roundGameRuleIds = resizeRoundRuleDrafts(
+                    chainGameRoundRuleIds,
+                    roundCount,
+                    selectedRuleId,
+                  );
+
+                  if (roundGameRuleIds.some((value) => !value)) {
+                    setCreateGameError(
+                      "Select a game rule for every chain round.",
+                    );
+                    return;
+                  }
+
+                  const interRoundDelaySeconds = Number(
+                    chainGameInterRoundDelaySeconds,
+                  );
+                  if (
+                    !Number.isInteger(interRoundDelaySeconds) ||
+                    interRoundDelaySeconds <
+                      CHAIN_GAME_MIN_INTER_ROUND_DELAY_SECONDS ||
+                    interRoundDelaySeconds >
+                      CHAIN_GAME_MAX_INTER_ROUND_DELAY_SECONDS
+                  ) {
+                    setCreateGameError(
+                      `Inter-round pause must be between ${CHAIN_GAME_MIN_INTER_ROUND_DELAY_SECONDS} and ${CHAIN_GAME_MAX_INTER_ROUND_DELAY_SECONDS} seconds.`,
+                    );
+                    return;
+                  }
+
+                  const chainDefaults = getCreateFormDefaults(
+                    defaultOperationMode,
+                    timeConfig,
+                  );
+
+                  lastCreateCategoryRef.current = "CHAIN_GAME";
+                  createGame.mutate({
+                    payload: {
+                      gameRuleId: roundGameRuleIds[0],
+                      category: "CHAIN_GAME",
+                      entryFee: chainGameEntryFee.trim(),
+                      fixedPrizeAmount: chainGameFixedPrizeAmount.trim(),
+                      maxCartelasPerPlayer: maxCartelas,
+                      // Chain games pause and resume themselves, so the server
+                      // must own the calling cadence.
+                      operationMode: "AUTO",
+                      registrationDurationSeconds: Number(
+                        chainDefaults.registrationDurationSeconds,
+                      ),
+                      autoCallIntervalSeconds: Number(
+                        chainDefaults.autoCallIntervalSeconds,
+                      ),
+                      roundCount,
+                      roundPrizes,
+                      roundGameRuleIds,
+                      interRoundDelaySeconds,
                     },
                   });
                   return;
@@ -4078,14 +4471,14 @@ export function GameOperations() {
                   }
 
                   const forceCount = Number(forceBigGameCartelaCount);
-                  if (
-                    !Number.isInteger(forceCount) ||
-                    forceCount < 2 ||
-                    forceCount > 10 ||
-                    forceCount % 2 !== 0
-                  ) {
+                  const isAllowedForceCount =
+                    Number.isInteger(forceCount) &&
+                    forceCount >= 1 &&
+                    forceCount <= 10 &&
+                    (forceCount === 1 || forceCount % 2 === 0);
+                  if (!isAllowedForceCount) {
                     setCreateGameError(
-                      "Total Big Tickets must be an even number from 2 to 10.",
+                      "Total Big Tickets must be 1, or an even number from 2 to 10.",
                     );
                     return;
                   }
@@ -4873,6 +5266,106 @@ function QueueOrderButtons({
         <ArrowDown className="h-4 w-4" />
       </LoadingButton>
     </div>
+  );
+}
+
+/**
+ * Per-round prize + game rule grid, shared by Big Game and Chain Game. The two
+ * categories differ only in their inter-round delay bounds, so those are props.
+ */
+function RoundConfigEditor({
+  idPrefix,
+  roundPrizes,
+  roundRuleIds,
+  fallbackRuleId,
+  activeGameRules,
+  interRoundDelaySeconds,
+  minDelaySeconds,
+  maxDelaySeconds,
+  delayHelpText,
+  onRoundPrizeChange,
+  onRoundRuleChange,
+  onInterRoundDelayChange,
+}: {
+  idPrefix: string;
+  roundPrizes: string[];
+  roundRuleIds: string[];
+  fallbackRuleId: string;
+  activeGameRules: GameRuleSummary[];
+  interRoundDelaySeconds: string;
+  minDelaySeconds: number;
+  maxDelaySeconds: number;
+  delayHelpText: string;
+  onRoundPrizeChange: (index: number, value: string) => void;
+  onRoundRuleChange: (index: number, value: string) => void;
+  onInterRoundDelayChange: (value: string) => void;
+}) {
+  return (
+    <>
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-inter-round-delay`}>
+          Inter-round delay (seconds)
+        </Label>
+        <Input
+          id={`${idPrefix}-inter-round-delay`}
+          type="number"
+          min={minDelaySeconds}
+          max={maxDelaySeconds}
+          value={interRoundDelaySeconds}
+          onChange={(event) => onInterRoundDelayChange(event.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">{delayHelpText}</p>
+      </div>
+      <div className="space-y-3 sm:col-span-2">
+        <Label>Round prize and game rule</Label>
+        <div className="grid gap-3">
+          {roundPrizes.map((prize, index) => (
+            <div
+              key={`${idPrefix}-round-config-${index}`}
+              className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2"
+            >
+              <div className="space-y-2">
+                <Label htmlFor={`${idPrefix}-round-prize-${index}`}>
+                  Round {index + 1} prize
+                </Label>
+                <Input
+                  id={`${idPrefix}-round-prize-${index}`}
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={prize}
+                  onChange={(event) =>
+                    onRoundPrizeChange(index, event.target.value)
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`${idPrefix}-round-rule-${index}`}>
+                  Round {index + 1} game rule
+                </Label>
+                <Select
+                  value={roundRuleIds[index] || fallbackRuleId || ""}
+                  onValueChange={(value) => onRoundRuleChange(index, value)}
+                >
+                  <SelectTrigger
+                    id={`${idPrefix}-round-rule-${index}`}
+                    className="w-full"
+                  >
+                    <SelectValue placeholder="Select rule" />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="z-[100] max-h-60">
+                    {activeGameRules.map((rule) => (
+                      <SelectItem key={rule.id} value={rule.id}>
+                        {rule.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

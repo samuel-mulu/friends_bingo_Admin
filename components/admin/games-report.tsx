@@ -70,6 +70,18 @@ import {
 const gamesReportQueryKey = (from: string, to: string) =>
   ["admin", "reports", "games", from, to] as const;
 
+function isChainGameWinnerRow(winner: GamesReportWinner): boolean {
+  return String(winner.category ?? "").toUpperCase() === "CHAIN_GAME";
+}
+
+/** BIG_GAME and CHAIN_GAME both report a round number per winning cartela. */
+function isMultiRoundWinner(winner: GamesReportWinner): boolean {
+  return (
+    String(winner.category ?? "").toUpperCase() === "BIG_GAME" ||
+    isChainGameWinnerRow(winner)
+  );
+}
+
 export function GamesReportView() {
   const [mode, setMode] = useState<FinancialPeriodMode>("daily");
   const [dayKey, setDayKey] = useState(getTodayDateKey);
@@ -157,13 +169,21 @@ export function GamesReportView() {
       gameOrder.map((gameId, index) => [gameId, index + 1]),
     );
 
-    return winners.map((winner) => {
+    // Chain Game emits one row per round, so the same cartela can repeat within
+    // a game — identify the group header by position, not by cartela.
+    const seenGameIds = new Set<string>();
+
+    return winners.map((winner, index) => {
       const gameWinners = byGame.get(winner.gameId) ?? [winner];
+      const isFirstOfGame = !seenGameIds.has(winner.gameId);
+      seenGameIds.add(winner.gameId);
+
       return {
+        rowKey: `${winner.gameId}-${winner.roundIndex ?? 1}-${winner.winnerCartelaId ?? winner.cartelaNumber ?? index}`,
         winner,
         gameIndex: gameIndexById.get(winner.gameId) ?? 0,
         gameWinners,
-        isFirstOfGame: gameWinners[0]?.winnerCartelaId === winner.winnerCartelaId,
+        isFirstOfGame,
       };
     });
   }, [gamesQuery.data?.winners]);
@@ -435,6 +455,16 @@ export function GamesReportView() {
               description="Prize value configured for created games"
               icon={<Trophy className="size-5" />}
             />
+            {Number(gamesQuery.data.forfeitedPrizeTotal ?? 0) > 0 ? (
+              <ReportMetricCard
+                title="Forfeited Chain Prizes"
+                value={formatCurrency(
+                  gamesQuery.data.forfeitedPrizeTotal ?? "0",
+                )}
+                description="Chain Game rounds never played after a no-winner"
+                icon={<Trophy className="size-5" />}
+              />
+            ) : null}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
@@ -523,17 +553,18 @@ export function GamesReportView() {
                   </TableHeader>
                   <TableBody>
                     {winnerRows.map(
-                      ({ winner, gameIndex, gameWinners, isFirstOfGame }) => {
+                      ({
+                        rowKey,
+                        winner,
+                        gameIndex,
+                        gameWinners,
+                        isFirstOfGame,
+                      }) => {
                         const winnersInGame = winner.winnersInGame ?? 1;
                         const sessionPrize = winner.sessionPrizeAmount;
 
                         return (
-                          <TableRow
-                            key={
-                              winner.winnerCartelaId ??
-                              `${winner.gameId}-${winner.cartelaNumber}`
-                            }
-                          >
+                          <TableRow key={rowKey}>
                             <TableCell className="text-right tabular-nums text-muted-foreground">
                               {isFirstOfGame ? gameIndex : ""}
                             </TableCell>
@@ -548,13 +579,20 @@ export function GamesReportView() {
                                     ? ` · ${winnersInGame} winners`
                                     : ""}
                                 </div>
-                                {(winner.category === "BIG_GAME" ||
-                                  String(winner.category ?? "").toUpperCase() ===
-                                    "BIG_GAME") &&
+                                {isMultiRoundWinner(winner) &&
                                 (winner.roundCount ?? 1) > 1 ? (
-                                  <div className="text-xs font-medium text-violet-800">
+                                  <div
+                                    className={
+                                      isChainGameWinnerRow(winner)
+                                        ? "text-xs font-medium text-teal-800"
+                                        : "text-xs font-medium text-violet-800"
+                                    }
+                                  >
                                     Round {winner.roundIndex ?? 1} of{" "}
                                     {winner.roundCount ?? 1}
+                                    {isChainGameWinnerRow(winner)
+                                      ? " · chain"
+                                      : ""}
                                   </div>
                                 ) : null}
                               </div>

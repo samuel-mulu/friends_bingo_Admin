@@ -97,6 +97,14 @@ export function exportGamesReportPdf(input: GamesReportPdfInput) {
       ["Bonus entry value", formatCurrency(report.bonusEntryValueTotal)],
       ["Bonus cartelas used", String(report.bonusCartelasUsed)],
       ["Total prize amount", formatCurrency(report.totalPrizeAmount)],
+      ...(Number(report.forfeitedPrizeTotal ?? 0) > 0
+        ? [
+            [
+              "Forfeited chain prizes",
+              formatCurrency(report.forfeitedPrizeTotal ?? "0"),
+            ],
+          ]
+        : []),
       ["Average players per game", report.averagePlayersPerGame.toFixed(2)],
     ],
     theme: "plain",
@@ -140,12 +148,14 @@ export function exportGamesReportPdf(input: GamesReportPdfInput) {
           winnersInGame > 1
             ? `${winner.gameName}\n${winner.gameCode} · ${winnersInGame} winners`
             : `${winner.gameName}\n${winner.gameCode}`;
-        const isBigGame =
-          winner.category === "BIG_GAME" ||
-          String(winner.category ?? "").toUpperCase() === "BIG_GAME";
+        const category = String(winner.category ?? "").toUpperCase();
+        const isMultiRound =
+          category === "BIG_GAME" || category === "CHAIN_GAME";
         const roundLabel =
-          isBigGame && (winner.roundCount ?? 1) > 1
-            ? `\nRound ${winner.roundIndex ?? 1} of ${winner.roundCount ?? 1}`
+          isMultiRound && (winner.roundCount ?? 1) > 1
+            ? `\nRound ${winner.roundIndex ?? 1} of ${winner.roundCount ?? 1}${
+                category === "CHAIN_GAME" ? " (chain)" : ""
+              }`
             : "";
 
         return [

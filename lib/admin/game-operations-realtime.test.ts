@@ -18,6 +18,8 @@ function createHandlers(): GameOperationsRealtimeListenerMap {
     gameWinnerWindowJoined: vi.fn(),
     gameFinished: vi.fn(),
     gameCancelled: vi.fn(),
+    chainRoundFinished: vi.fn(),
+    chainRoundStarted: vi.fn(),
     sessionPrizeUpdated: vi.fn(),
     sessionCartelasUpdated: vi.fn(),
     slotStatusChanged: vi.fn(),
@@ -107,7 +109,7 @@ describe("game-operations-realtime", () => {
     const cleanupA = registerGameOperationsRealtimeListeners(socket, handlers);
     expect(
       [...listeners.values()].reduce((count, bucket) => count + bucket.size, 0),
-    ).toBe(13);
+    ).toBe(15);
 
     cleanupA();
     expect(
@@ -117,7 +119,7 @@ describe("game-operations-realtime", () => {
     const cleanupB = registerGameOperationsRealtimeListeners(socket, handlers);
     expect(
       [...listeners.values()].reduce((count, bucket) => count + bucket.size, 0),
-    ).toBe(13);
+    ).toBe(15);
 
     cleanupB();
     expect(

@@ -360,6 +360,57 @@ function PlayerGameSessionDetailDialog({
                 </div>
               </div>
 
+              {(session.roundResults?.length ?? 0) > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-base font-semibold">Chain rounds</div>
+                  <div className="space-y-2">
+                    {session.roundResults!.map((round) => {
+                      const forfeited = round.outcome === "FORFEITED";
+                      return (
+                        <div
+                          key={round.id}
+                          className="flex items-start justify-between gap-3 rounded-xl border border-border/60 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-teal-800">
+                              Round {round.roundIndex}
+                              {session.roundCount != null
+                                ? ` of ${session.roundCount}`
+                                : ""}
+                            </div>
+                            <div className="text-sm font-medium">
+                              {round.gameRuleName ?? round.gameRuleKey ?? "—"}
+                            </div>
+                            {round.winners.length > 0 ? (
+                              <div className="mt-1 text-sm font-semibold text-amber-800">
+                                {round.winners
+                                  .map((winner) => `#${winner.cartelaNumber}`)
+                                  .join(" · ")}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="text-right">
+                            <div
+                              className={cn(
+                                "text-sm font-bold",
+                                forfeited && "text-muted-foreground line-through",
+                              )}
+                            >
+                              {formatCurrency(round.prizeAmount)}
+                            </div>
+                            {forfeited ? (
+                              <div className="text-xs text-muted-foreground">
+                                Not played
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="space-y-2 rounded-xl border border-border/60 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold">Called numbers</div>

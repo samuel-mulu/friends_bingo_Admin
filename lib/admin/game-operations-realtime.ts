@@ -37,6 +37,8 @@ export type GameOperationsRealtimeListenerMap = {
   gameWinnerWindowJoined: (payload: unknown) => void;
   gameFinished: (payload: unknown) => void;
   gameCancelled: (payload: unknown) => void;
+  chainRoundFinished: (payload: unknown) => void;
+  chainRoundStarted: (payload: unknown) => void;
   sessionPrizeUpdated: (payload: unknown) => void;
   sessionCartelasUpdated: (payload: unknown) => void;
   slotStatusChanged: (payload: unknown) => void;
@@ -122,6 +124,8 @@ export function registerGameOperationsRealtimeListeners(
     ["game:winner_window_joined", handlers.gameWinnerWindowJoined],
     ["game:finished", handlers.gameFinished],
     ["game:cancelled", handlers.gameCancelled],
+    ["chain:round_finished", handlers.chainRoundFinished],
+    ["chain:round_started", handlers.chainRoundStarted],
     ["session:prize_updated", handlers.sessionPrizeUpdated],
     ["session:cartelas_updated", handlers.sessionCartelasUpdated],
     ["slot:status_changed", handlers.slotStatusChanged],

@@ -17,6 +17,7 @@ import {
   patchOperationsForRegistration,
   patchOperationsForStatusChanged,
   patchOperationsForWinnerWindow,
+  patchOperationsForChainRound,
   patchOperationsFromCanonicalEvent,
   parseAutoCallScheduleFromPayload,
   optimisticallyClearWaitingQueue,
@@ -291,6 +292,121 @@ describe("game-operations-cache", () => {
     );
   });
 
+  it("allows Chain Game WINNER_WINDOW to return to PLAYING for the inter-round pause", () => {
+    const queryClient = new QueryClient();
+    const state = createOperationsState();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...state,
+      liveGame: {
+        ...state.liveGame!,
+        category: "CHAIN_GAME",
+        isChainGame: true,
+        rawStatus: "WINNER_WINDOW",
+        playerStatus: "winnerWindow",
+        canCallNumber: false,
+        autoCallEnabled: false,
+        winnerWindowEndsAt: "2026-08-03T12:00:30.000Z",
+        roundCount: 2,
+        roundIndex: 1,
+      },
+    });
+
+    const patched = patchOperationsForStatusChanged(queryClient, {
+      sessionId: "session-1",
+      gameSlotId: "slot-1",
+      status: "PLAYING",
+      isChainGame: true,
+      category: "CHAIN_GAME",
+      roundPausedUntil: "2026-08-03T12:00:50.000Z",
+      roundIndex: 2,
+      roundPrizeAmount: "2000",
+      winnerWindowEndsAt: null,
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.rawStatus).toBe("PLAYING");
+    expect(operations?.liveGame?.playerStatus).toBe("playing");
+    expect(operations?.liveGame?.roundPausedUntil).toBe(
+      "2026-08-03T12:00:50.000Z",
+    );
+    expect(operations?.liveGame?.roundIndex).toBe(2);
+    expect(operations?.liveGame?.winnerWindowEndsAt).toBeNull();
+  });
+
+  it("still rejects Normal WINNER_WINDOW regressing to PLAYING", () => {
+    const queryClient = new QueryClient();
+    const state = createOperationsState();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...state,
+      liveGame: {
+        ...state.liveGame!,
+        rawStatus: "WINNER_WINDOW",
+        playerStatus: "winnerWindow",
+        winnerWindowEndsAt: "2026-08-03T12:00:30.000Z",
+      },
+    });
+
+    const patched = patchOperationsForStatusChanged(queryClient, {
+      sessionId: "session-1",
+      gameSlotId: "slot-1",
+      status: "PLAYING",
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.rawStatus).toBe("WINNER_WINDOW");
+    expect(operations?.liveGame?.playerStatus).toBe("winnerWindow");
+  });
+
+  it("patches chain:round_finished onto PLAYING with a pause", () => {
+    const queryClient = new QueryClient();
+    const state = createOperationsState();
+    queryClient.setQueryData(operationsQueryKey, {
+      ...state,
+      liveGame: {
+        ...state.liveGame!,
+        category: "CHAIN_GAME",
+        isChainGame: true,
+        rawStatus: "WINNER_WINDOW",
+        playerStatus: "winnerWindow",
+        winnerWindowEndsAt: "2026-08-03T12:00:30.000Z",
+        roundCount: 2,
+        roundIndex: 1,
+      },
+    });
+
+    const patched = patchOperationsForChainRound(queryClient, {
+      sessionId: "session-1",
+      slotId: "slot-1",
+      finishedRoundIndex: 1,
+      nextRoundIndex: 2,
+      pausedUntil: "2026-08-03T12:00:50.000Z",
+      nextRoundPrizeAmount: "2000",
+      roundCount: 2,
+      winners: [{ gameCartelaId: "gc-1", cartelaNumber: 1458, amount: "3000" }],
+    });
+
+    const operations = queryClient.getQueryData<GameOperationsCurrentResponse>(
+      operationsQueryKey,
+    );
+
+    expect(patched).toBe(true);
+    expect(operations?.liveGame?.playerStatus).toBe("playing");
+    expect(operations?.liveGame?.roundPausedUntil).toBe(
+      "2026-08-03T12:00:50.000Z",
+    );
+    expect(operations?.liveGame?.roundIndex).toBe(2);
+    expect(operations?.liveGame?.autoCallEnabled).toBe(false);
+    expect(operations?.liveGame?.winnerWindowEndsAt).toBeNull();
+  });
+
   it("patches registration metrics directly from thin session updates", () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(operationsQueryKey, createOperationsState());
@@ -375,6 +491,51 @@ describe("game-operations-cache", () => {
 
     expect(normalized.liveGame).toBeNull();
     expect(normalized.bigGameNextRegistration?.roundIndex).toBe(2);
+  });
+
+  it("does not treat CHAIN_GAME as Big Game, so a paused chain stays on the live card", () => {
+    const pausedChain = {
+      ...createOperationsState().liveGame!,
+      category: "CHAIN_GAME" as const,
+      isBigGame: false,
+      isChainGame: true,
+      rawStatus: "PLAYING" as const,
+      playerStatus: "playing" as const,
+      roundCount: 2,
+      roundIndex: 2,
+      roundPausedUntil: "2026-09-14T10:00:20.000Z",
+    };
+
+    const normalized = normalizeAdminOperationsSnapshot({
+      ...createOperationsState(),
+      liveGame: pausedChain,
+    });
+
+    expect(normalized.liveGame?.category).toBe("CHAIN_GAME");
+    expect(normalized.liveGame?.roundPausedUntil).toBe(
+      "2026-09-14T10:00:20.000Z",
+    );
+  });
+
+  it("keeps a finished Chain Game in liveGame for the post-game summary", () => {
+    const finishedChain = {
+      ...createOperationsState().liveGame!,
+      category: "CHAIN_GAME" as const,
+      isBigGame: false,
+      isChainGame: true,
+      rawStatus: "FINISHED" as const,
+      playerStatus: "finished" as const,
+      roundCount: 2,
+      roundIndex: 2,
+    };
+
+    const normalized = normalizeAdminOperationsSnapshot({
+      ...createOperationsState(),
+      liveGame: finishedChain,
+    });
+
+    expect(normalized.liveGame?.playerStatus).toBe("finished");
+    expect(normalized.liveGame?.category).toBe("CHAIN_GAME");
   });
 
   it("keeps finished Normal liveGame for post-game grace display", () => {

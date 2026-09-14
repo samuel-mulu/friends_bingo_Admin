@@ -72,6 +72,11 @@ type SessionRealtimePayload = {
   winnerWindowEndsAt?: string | null;
   noWinnerGraceEndsAt?: string | null;
   noWinnerReason?: string | null;
+  roundPausedUntil?: string | null;
+  roundIndex?: number;
+  currentRound?: number;
+  roundPrizeAmount?: string | null;
+  isChainGame?: boolean;
   winnerPayoutsSummary?: GameOperationItem["winnerPayoutsSummary"];
   sessionOutcomeSummary?: GameOperationItem["sessionOutcomeSummary"];
   gameSlot?: {
@@ -118,6 +123,23 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function isChainGameOperationItem(
+  item: Pick<GameOperationItem, "category" | "isChainGame"> | null | undefined,
+): boolean {
+  return Boolean(item?.isChainGame || item?.category === "CHAIN_GAME");
+}
+
+function isChainWinnerWindowToPlaying(
+  base: GameOperationItem,
+  nextStatus: string | null | undefined,
+): boolean {
+  return (
+    isChainGameOperationItem(base) &&
+    base.rawStatus === "WINNER_WINDOW" &&
+    nextStatus === "PLAYING"
+  );
 }
 
 function getRealtimeStatusRank(status: string | null | undefined): number {
@@ -417,8 +439,13 @@ export function patchOperationsCache(
   return true;
 }
 
+/**
+ * Strictly BIG_GAME. CHAIN_GAME is also multi-round but runs in the standard
+ * queue, so it must never match here: the terminal-liveGame suppression below
+ * would drop a live chain game off the admin screen between rounds.
+ */
 function isBigGameOperationItem(item: GameOperationItem | null | undefined): boolean {
-  return item?.isBigGame === true || item?.category === "BIG_GAME";
+  return item?.category === "BIG_GAME" || (item?.isBigGame === true && item?.category !== "CHAIN_GAME");
 }
 
 function isTerminalOperationItem(item: GameOperationItem | null | undefined): boolean {
@@ -637,7 +664,20 @@ function mergeSessionOperationItem(
     payload.status &&
     getRealtimeStatusRank(payload.status) < getRealtimeStatusRank(base.rawStatus)
   ) {
-    return null;
+    if (!isChainWinnerWindowToPlaying(base, payload.status)) {
+      logOperationsDebug("status_rank_rejected", {
+        from: base.rawStatus,
+        to: payload.status,
+        sessionId: base.sessionId,
+        isChain: isChainGameOperationItem(base),
+      });
+      return null;
+    }
+    logOperationsDebug("chain_ww_to_playing", {
+      sessionId: base.sessionId,
+      roundPausedUntil: payload.roundPausedUntil ?? null,
+      roundIndex: payload.roundIndex ?? null,
+    });
   }
 
   const operationStatus = deriveOperationStatusForSession(
@@ -660,6 +700,7 @@ function mergeSessionOperationItem(
     category: payload.category ?? base.category,
     isBonus: payload.isBonus ?? base.isBonus,
     isBigGame: payload.isBigGame ?? base.isBigGame,
+    isChainGame: payload.isChainGame ?? base.isChainGame,
     fixedPrizeAmount:
       payload.fixedPrizeAmount !== undefined
         ? payload.fixedPrizeAmount
@@ -684,7 +725,23 @@ function mergeSessionOperationItem(
     winnerWindowEndsAt:
       payload.winnerWindowEndsAt !== undefined
         ? payload.winnerWindowEndsAt
-        : base.winnerWindowEndsAt,
+        : isChainWinnerWindowToPlaying(base, payload.status)
+          ? null
+          : base.winnerWindowEndsAt,
+    roundPausedUntil:
+      payload.roundPausedUntil !== undefined
+        ? payload.roundPausedUntil
+        : base.roundPausedUntil,
+    roundIndex:
+      payload.roundIndex !== undefined ? payload.roundIndex : base.roundIndex,
+    currentRound:
+      payload.currentRound !== undefined
+        ? payload.currentRound
+        : base.currentRound,
+    roundPrizeAmount:
+      payload.roundPrizeAmount !== undefined
+        ? payload.roundPrizeAmount
+        : base.roundPrizeAmount,
     noWinnerGraceEndsAt:
       payload.noWinnerGraceEndsAt !== undefined
         ? payload.noWinnerGraceEndsAt
@@ -945,6 +1002,92 @@ export function patchOperationsForFinished(
     });
 
     return removeMatchingOperationItems(current, { sessionId, slotId });
+  });
+}
+
+function optionalPositiveInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+/** CHAIN_GAME round boundary. Session stays PLAYING; never treat as game:finished. */
+export function patchOperationsForChainRound(
+  queryClient: QueryClient,
+  payload: unknown,
+): boolean {
+  const record = asRecord(payload);
+  if (!record) {
+    return false;
+  }
+
+  const sessionId =
+    typeof record.sessionId === "string" ? record.sessionId : null;
+  const slotId =
+    typeof record.slotId === "string"
+      ? record.slotId
+      : typeof record.gameSlotId === "string"
+        ? record.gameSlotId
+        : null;
+
+  if (!sessionId && !slotId) {
+    return false;
+  }
+
+  const finishedRoundIndex = optionalPositiveInt(record.finishedRoundIndex);
+  const isRoundFinished = finishedRoundIndex != null;
+  const nextRoundIndex = optionalPositiveInt(
+    isRoundFinished ? record.nextRoundIndex : record.roundIndex,
+  );
+  const pausedUntil =
+    typeof record.pausedUntil === "string" ? record.pausedUntil : null;
+  const roundPrizeAmount =
+    typeof record.nextRoundPrizeAmount === "string"
+      ? record.nextRoundPrizeAmount
+      : typeof record.roundPrizeAmount === "string"
+        ? record.roundPrizeAmount
+        : undefined;
+
+  return updateOperationsSnapshot(queryClient, (current) => {
+    const existing = findMatchingOperationItem(current, { sessionId, slotId });
+    logOperationsDebug("chain_round", {
+      payload: {
+        sessionId,
+        slotId,
+        finishedRoundIndex: finishedRoundIndex ?? null,
+        nextRoundIndex: nextRoundIndex ?? null,
+        pausedUntil,
+      },
+      existing: summarizeOperationItem(existing),
+    });
+
+    if (!existing || !isChainGameOperationItem(existing)) {
+      return null;
+    }
+
+    const nextItem: GameOperationItem = {
+      ...existing,
+      rawStatus: "PLAYING",
+      playerStatus: "playing",
+      operationStatus: "live",
+      winnerWindowEndsAt: null,
+      autoCallEnabled: isRoundFinished ? false : existing.autoCallEnabled,
+      nextAutoCallAt: isRoundFinished ? null : existing.nextAutoCallAt,
+      roundPausedUntil: isRoundFinished ? pausedUntil : null,
+      roundIndex: nextRoundIndex ?? existing.roundIndex,
+      currentRound: nextRoundIndex ?? existing.currentRound,
+      roundPrizeAmount: roundPrizeAmount ?? existing.roundPrizeAmount,
+      canCallNumber: !isRoundFinished,
+    };
+
+    return applyOperationItemToBucket(current, nextItem);
   });
 }
 
@@ -1314,10 +1457,15 @@ export function createOptimisticCalledNumber(
 }
 
 function isBigGameCategoryPayload(record: Record<string, unknown>): boolean {
+  const category = String(record.category ?? "").toUpperCase();
+  // CHAIN_GAME has no Big Game event card to invalidate.
+  if (category === "CHAIN_GAME") {
+    return false;
+  }
   return (
     record.category === "BIG_GAME" ||
     record.isBigGame === true ||
-    String(record.category ?? "").toUpperCase() === "BIG_GAME"
+    category === "BIG_GAME"
   );
 }
 

@@ -231,7 +231,6 @@ describe("game-operation-defaults", () => {
         category: "BIG_GAME",
         entryFee: "25",
         fixedPrizeAmount: "10000",
-        maxCartelasPerPlayer: 20,
         registrationOpensAt: "2026-07-01T09:00:00.000Z",
         playStartAt: "2026-07-01T12:00:00.000Z",
       }),
@@ -240,7 +239,6 @@ describe("game-operation-defaults", () => {
       category: "BIG_GAME",
       entryFee: "25",
       fixedPrizeAmount: "10000",
-      maxCartelasPerPlayer: 20,
       registrationOpensAt: "2026-07-01T09:00:00.000Z",
       playStartAt: "2026-07-01T12:00:00.000Z",
     });
@@ -267,6 +265,34 @@ describe("game-operation-defaults", () => {
       operationMode: "AUTO",
       registrationDurationSeconds: 60,
       autoCallIntervalSeconds: 7,
+    });
+  });
+
+  it("builds create-game request body for Chain Game rounds without a Big Game schedule", () => {
+    expect(
+      buildCreateGameRequestBody({
+        gameRuleId: "rule-1",
+        category: "CHAIN_GAME",
+        entryFee: "25",
+        fixedPrizeAmount: "5000",
+        maxCartelasPerPlayer: 10,
+        operationMode: "AUTO",
+        roundCount: 2,
+        roundPrizes: ["3000", "2000"],
+        roundGameRuleIds: ["rule-1", "rule-2"],
+        interRoundDelaySeconds: 20,
+      }),
+    ).toEqual({
+      gameRuleId: "rule-1",
+      category: "CHAIN_GAME",
+      entryFee: "25",
+      fixedPrizeAmount: "5000",
+      maxCartelasPerPlayer: 10,
+      operationMode: "AUTO",
+      roundCount: 2,
+      roundPrizes: ["3000", "2000"],
+      roundGameRuleIds: ["rule-1", "rule-2"],
+      interRoundDelaySeconds: 20,
     });
   });
 

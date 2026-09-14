@@ -193,6 +193,10 @@ export interface AdminPlayerGameHistoryItem {
   registeredCartelasCount: number;
   calledNumbersCount: number;
   myCartelas: AdminPlayerGameCartela[];
+  category?: string;
+  roundCount?: number | null;
+  roundIndex?: number | null;
+  roundResults?: ChainRoundResult[];
 }
 
 export interface SessionWinnerCompletedPattern {
@@ -438,7 +442,34 @@ export type GameStatus =
   | "NO_WINNER"
   | "CANCELLED";
 
-export type GameCategory = "NORMAL" | "BONUS" | "BIG_GOTD" | "BIG_GAME";
+export type GameCategory =
+  | "NORMAL"
+  | "BONUS"
+  | "BIG_GOTD"
+  | "BIG_GAME"
+  | "CHAIN_GAME";
+
+export type ChainRoundOutcome = "WON" | "FORFEITED";
+
+/** CHAIN_GAME: one finished round of a chain session. Empty for other categories. */
+export interface ChainRoundResult {
+  id: string;
+  roundIndex: number;
+  gameRuleId: string | null;
+  gameRuleKey: string | null;
+  gameRuleName: string | null;
+  prizeAmount: string;
+  paidAmount: string;
+  outcome: ChainRoundOutcome;
+  winningBallLetter: string | null;
+  winningBallNumber: number | null;
+  finalizedAt: string | null;
+  winners: Array<{
+    gameCartelaId: string;
+    cartelaNumber: number;
+    amount: string;
+  }>;
+}
 
 export interface GameRuleSummary {
   id: string;
@@ -507,6 +538,7 @@ export interface CreateGamePayload {
   category?: GameCategory;
   fixedPrizeAmount?: string;
   entryFee?: string;
+  /** BONUS / BIG_GOTD / CHAIN_GAME per-player cap. Ignored for BIG_GAME (unlimited). */
   maxCartelasPerPlayer?: number;
   registrationOpensAt?: string;
   playStartAt?: string;
@@ -520,7 +552,7 @@ export interface CreateGamePayload {
   interRoundDelaySeconds?: number;
   /** NORMAL / BONUS / BIG_GOTD: force-grant Big Tickets from winner prizes into the active Big Game. */
   forceBigGameEnabled?: boolean;
-  /** NORMAL / BONUS / BIG_GOTD: total Big Tickets pool (1 winner gets all; 2 winners split; 3+ get none). Even integer 2–10. */
+  /** NORMAL / BONUS / BIG_GOTD: total Big Tickets pool (1 winner gets all; 2 winners split, except pool 1 gives 1 each; 3+ get none). 1, or even integer 2–10. */
   forceBigGameCartelaCount?: number;
   operationMode?: GameOperationMode;
   registrationDurationSeconds?: number;
@@ -641,6 +673,7 @@ export interface FinancialRevenueBreakdown {
   bonusPrizeCost: string;
   bigGotdNet: string;
   bigGameNet: string;
+  chainGameNet: string;
 }
 
 export interface FinancialSettlementAccount {
@@ -687,6 +720,8 @@ export interface GamesReport {
   bonusEntryValueTotal: string;
   bonusCartelasUsed: number;
   totalPrizeAmount: string;
+  /** CHAIN_GAME rounds that were configured but never played (no winner mid-chain). */
+  forfeitedPrizeTotal?: string;
   averagePlayersPerGame: number;
   winners: GamesReportWinner[];
 }
@@ -751,6 +786,12 @@ export interface AdminBingoClaim {
     status: GameStatus;
     prizeAmount: string;
     roundIndex?: number | null;
+    roundResults?: Array<{
+      roundIndex: number;
+      outcome?: "WON" | "FORFEITED" | string | null;
+      finalizedAt: string | null;
+      winners?: Array<{ gameCartelaId: string }>;
+    }>;
     gameSlot: {
       id: string;
       gameType: string;

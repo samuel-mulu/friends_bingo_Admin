@@ -632,6 +632,16 @@ export function FinancialReportView() {
                     )}
                   </p>
                 </div>
+                <div className="rounded-lg border border-border/70 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    CHAIN GAME net
+                  </p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(
+                      financialQuery.data.revenueBreakdown.chainGameNet ?? "0",
+                    )}
+                  </p>
+                </div>
               </CardContent>
             </Card>
           ) : null}

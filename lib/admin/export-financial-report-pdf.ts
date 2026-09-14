@@ -174,6 +174,10 @@ export function exportFinancialReportPdf(input: FinancialReportPdfInput) {
         ],
         ["BIG GOTD net", formatCurrency(report.revenueBreakdown.bigGotdNet)],
         ["BIG GAME net", formatCurrency(report.revenueBreakdown.bigGameNet)],
+        [
+          "CHAIN GAME net",
+          formatCurrency(report.revenueBreakdown.chainGameNet ?? "0"),
+        ],
       ],
       theme: "plain",
       styles: {

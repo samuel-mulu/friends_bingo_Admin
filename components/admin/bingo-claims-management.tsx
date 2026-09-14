@@ -52,7 +52,8 @@ type ClaimGameGroup = {
   ruleKey: string;
   gameType: string;
   isManualRule: boolean;
-  isBigGame: boolean;
+  /** BIG_GAME and CHAIN_GAME both play numbered rounds worth labelling. */
+  isMultiRound: boolean;
   roundIndex: number;
   roundCount: number | null;
   latestCreatedAt: string;
@@ -97,9 +98,9 @@ function groupClaimsByGame(claims: AdminBingoClaim[]): ClaimGameGroup[] {
       ruleKey: rule?.key ?? first.checkedPattern ?? slot.gameType,
       gameType: slot.gameType,
       isManualRule,
-      isBigGame:
-        slot.category === "BIG_GAME" ||
-        String(slot.category ?? "").toUpperCase() === "BIG_GAME",
+      isMultiRound: ["BIG_GAME", "CHAIN_GAME"].includes(
+        String(slot.category ?? "").toUpperCase(),
+      ),
       roundIndex: first.gameSession.roundIndex ?? 1,
       roundCount: slot.roundCount ?? null,
       latestCreatedAt: sorted[0]?.createdAt ?? first.createdAt,
@@ -108,6 +109,41 @@ function groupClaimsByGame(claims: AdminBingoClaim[]): ClaimGameGroup[] {
         .length,
     };
   });
+}
+
+function claimDisplayRoundIndex(
+  claim: AdminBingoClaim,
+  group: ClaimGameGroup,
+): number {
+  if (!group.isMultiRound) {
+    return group.roundIndex;
+  }
+
+  const rounds = claim.gameSession.roundResults ?? [];
+  if (rounds.length === 0) {
+    return group.roundIndex;
+  }
+
+  const at = new Date(claim.createdAt).getTime();
+  const sorted = [...rounds].sort((a, b) => a.roundIndex - b.roundIndex);
+  for (const round of sorted) {
+    if (
+      round.winners?.some(
+        (winner) => winner.gameCartelaId === claim.gameCartelaId,
+      )
+    ) {
+      return round.roundIndex;
+    }
+  }
+  for (const round of sorted) {
+    if (
+      round.finalizedAt &&
+      at <= new Date(round.finalizedAt).getTime()
+    ) {
+      return round.roundIndex;
+    }
+  }
+  return group.roundIndex;
 }
 
 function statusCounts(claims: AdminBingoClaim[]) {
@@ -273,7 +309,7 @@ export function BingoClaimsManagement() {
                                 <span className="block text-xs text-muted-foreground">
                                   Slot {group.slotName} · {group.ruleName}
                                 </span>
-                                {group.isBigGame ? (
+                                {group.isMultiRound ? (
                                   <span className="block text-xs font-medium text-violet-800">
                                     Round {group.roundIndex}
                                     {group.roundCount != null
@@ -351,6 +387,11 @@ export function BingoClaimsManagement() {
                                     )}
                                   >
                                     #{claim.gameCartela.cartela.number}
+                                    {group.isMultiRound ? (
+                                      <span className="ml-1">
+                                        · R{claimDisplayRoundIndex(claim, group)}
+                                      </span>
+                                    ) : null}
                                   </Badge>
                                 ))}
                               </div>
@@ -373,6 +414,18 @@ export function BingoClaimsManagement() {
                                       <div className="min-w-0">
                                         <div className="font-medium">
                                           #{claim.gameCartela.cartela.number}
+                                          {group.isMultiRound ? (
+                                            <span className="ml-2 text-xs font-medium text-teal-800">
+                                              Round{" "}
+                                              {claimDisplayRoundIndex(
+                                                claim,
+                                                group,
+                                              )}
+                                              {group.roundCount != null
+                                                ? ` of ${group.roundCount}`
+                                                : ""}
+                                            </span>
+                                          ) : null}
                                           <span className="ml-2 text-sm font-normal text-muted-foreground">
                                             {claim.user.fullName}
                                           </span>
