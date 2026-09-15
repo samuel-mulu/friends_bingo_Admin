@@ -279,6 +279,22 @@ function resolveCurrentRoundPrize(game: {
   return game.fixedPrizeAmount ?? game.prizeAmount ?? null;
 }
 
+function resolveLivePrizePoolAmount(game: {
+  category?: GameOperationItem["category"];
+  isChainGame?: boolean | null;
+  roundIndex?: number | null;
+  currentRound?: number | null;
+  roundPrizes?: string[] | null;
+  roundPrizeAmount?: string | null;
+  fixedPrizeAmount?: string | null;
+  prizeAmount?: string | null;
+}): string {
+  if (isChainGameOperationItem(game)) {
+    return resolveCurrentRoundPrize(game) ?? game.prizeAmount ?? "0";
+  }
+  return game.prizeAmount ?? "0";
+}
+
 function resolveCompanyFeePerCartela(game: GameOperationItem): string {
   if (game.companyFeePerCartela) {
     return game.companyFeePerCartela;
@@ -2569,12 +2585,31 @@ export function GameOperations() {
                     Click to view players
                   </p>
                 </button>
-                <div className="rounded-lg border bg-white p-4 text-center">
-                  <p className="text-sm text-muted-foreground">Prize pool</p>
-                  <p className="mt-1 text-2xl font-bold text-primary">
-                    {formatCurrency(currentGame.prizeAmount)}
-                  </p>
-                </div>
+                {(() => {
+                  const livePrize = resolveLivePrizePoolAmount(currentGame);
+                  const totalPrize = currentGame.prizeAmount;
+                  const showChainTotal =
+                    isChainGameOperationItem(currentGame) &&
+                    Boolean(totalPrize) &&
+                    Number(livePrize) !== Number(totalPrize);
+                  return (
+                    <div className="rounded-lg border bg-white p-4 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        {isChainGameOperationItem(currentGame)
+                          ? "Round prize"
+                          : "Prize pool"}
+                      </p>
+                      <p className="mt-1 text-2xl font-bold text-primary">
+                        {formatCurrency(livePrize)}
+                      </p>
+                      {showChainTotal ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Total {formatCurrency(totalPrize)}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
