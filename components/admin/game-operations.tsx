@@ -805,14 +805,53 @@ export function GameOperations() {
         : null,
       queueSize: queue.length,
       socketConnected,
+      bigGame: {
+        scheduledSessionId: scheduledBigGame?.sessionId ?? null,
+        scheduledStatus: scheduledBigGame?.status ?? null,
+        scheduledRoundIndex: scheduledBigGame?.roundIndex ?? null,
+        registrationOpensAt: scheduledBigGame?.registrationOpensAt ?? null,
+        scheduledStartAt: scheduledBigGame?.scheduledStartAt ?? null,
+        interRoundDelaySeconds:
+          scheduledBigGame?.interRoundDelaySeconds ?? null,
+        nextRegSessionId:
+          operations?.bigGameNextRegistration?.sessionId ??
+          scheduledBigGame?.nextRoundRegistration?.sessionId ??
+          null,
+        nextRegRoundIndex:
+          operations?.bigGameNextRegistration?.roundIndex ??
+          scheduledBigGame?.nextRoundRegistration?.roundIndex ??
+          null,
+        nextRegOpensAt:
+          operations?.bigGameNextRegistration?.registrationOpensAt ??
+          scheduledBigGame?.nextRoundRegistration?.registrationOpensAt ??
+          null,
+        nextRegPlayStartsAt:
+          operations?.bigGameNextRegistration?.scheduledStartAt ??
+          scheduledBigGame?.nextRoundRegistration?.scheduledStartAt ??
+          null,
+      },
     });
   }, [
     checkingGame,
     currentGame,
     liveGame,
+    operations?.bigGameNextRegistration?.registrationOpensAt,
+    operations?.bigGameNextRegistration?.roundIndex,
+    operations?.bigGameNextRegistration?.scheduledStartAt,
+    operations?.bigGameNextRegistration?.sessionId,
     operations?.operationsState,
     queue.length,
     registrationOpenGame,
+    scheduledBigGame?.interRoundDelaySeconds,
+    scheduledBigGame?.nextRoundRegistration?.registrationOpensAt,
+    scheduledBigGame?.nextRoundRegistration?.roundIndex,
+    scheduledBigGame?.nextRoundRegistration?.scheduledStartAt,
+    scheduledBigGame?.nextRoundRegistration?.sessionId,
+    scheduledBigGame?.registrationOpensAt,
+    scheduledBigGame?.roundIndex,
+    scheduledBigGame?.scheduledStartAt,
+    scheduledBigGame?.sessionId,
+    scheduledBigGame?.status,
     socketConnected,
   ]);
 
@@ -3985,7 +4024,7 @@ export function GameOperations() {
                     interRoundDelaySeconds={bigGameInterRoundDelaySeconds}
                     minDelaySeconds={BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS}
                     maxDelaySeconds={BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS}
-                    delayHelpText="Time between one round finishing and the next round's registration opening."
+                    delayHelpText="After a round finishes (summary), how long until the next round auto-starts. Next-round registration opens only in that inter-round window — not while the prior round is still live."
                     onInterRoundDelayChange={setBigGameInterRoundDelaySeconds}
                     onRoundPrizeChange={(index, value) =>
                       setBigGameRoundPrizes((current) =>
