@@ -128,13 +128,25 @@ import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
 function isBigGameOperationItem(
-  item: Pick<GameOperationItem, "category" | "isBigGame"> | null | undefined,
+  item:
+    | {
+        category?: GameOperationItem["category"] | null;
+        isBigGame?: boolean | null;
+      }
+    | null
+    | undefined,
 ): boolean {
   return Boolean(item?.isBigGame || item?.category === "BIG_GAME");
 }
 
 function isChainGameOperationItem(
-  item: Pick<GameOperationItem, "category" | "isChainGame"> | null | undefined,
+  item:
+    | {
+        category?: GameOperationItem["category"] | null;
+        isChainGame?: boolean | null;
+      }
+    | null
+    | undefined,
 ): boolean {
   return Boolean(item?.isChainGame || item?.category === "CHAIN_GAME");
 }
@@ -146,7 +158,11 @@ function isChainGameOperationItem(
  */
 function isMultiRoundOperationItem(
   item:
-    | Pick<GameOperationItem, "category" | "isBigGame" | "isChainGame">
+    | {
+        category?: GameOperationItem["category"] | null;
+        isBigGame?: boolean | null;
+        isChainGame?: boolean | null;
+      }
     | null
     | undefined,
 ): boolean {
