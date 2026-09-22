@@ -206,6 +206,22 @@ describe("game-operation-defaults", () => {
     });
   });
 
+  it("builds create-game request body for Normal with optional max cartelas", () => {
+    expect(
+      buildCreateGameRequestBody({
+        gameRuleId: "rule-1",
+        category: "NORMAL",
+        maxCartelasPerPlayer: 8,
+        operationMode: "MANUAL",
+      }),
+    ).toEqual({
+      gameRuleId: "rule-1",
+      category: "NORMAL",
+      maxCartelasPerPlayer: 8,
+      operationMode: "MANUAL",
+    });
+  });
+
   it("builds create-game request body for Bonus with fixed prize fields", () => {
     expect(
       buildCreateGameRequestBody({

@@ -554,6 +554,8 @@ export function GameOperations() {
   const [normalCommissionDraft, setNormalCommissionDraft] = useState(
     FALLBACK_NORMAL_COMMISSION,
   );
+  const [normalMaxCartelasPerPlayer, setNormalMaxCartelasPerPlayer] =
+    useState("");
   const normalEconomicsInitializedRef = useRef(false);
   const [defaultOperationMode, setDefaultOperationMode] =
     useState<GameOperationMode>("MANUAL");
@@ -3783,6 +3785,7 @@ export function GameOperations() {
             setChainGameInterRoundDelaySeconds(
               CHAIN_GAME_DEFAULT_INTER_ROUND_DELAY_SECONDS,
             );
+            setNormalMaxCartelasPerPlayer("");
             setForceBigGameEnabled(false);
             setForceBigGameCartelaCount("2");
           }
@@ -3943,16 +3946,38 @@ export function GameOperations() {
             ) : null}
 
             {createGameCategory === "NORMAL" ? (
-              <NormalEconomicsEditor
-                entryFee={normalEntryFeeDraft}
-                companyFeePerCartela={normalCommissionDraft}
-                prizePerCartela={computePrizePerCartelaFromEconomics(
-                  normalEntryFeeDraft,
-                  normalCommissionDraft,
-                )}
-                onEntryFeeChange={setNormalEntryFeeDraft}
-                onCommissionChange={setNormalCommissionDraft}
-              />
+              <div className="space-y-4">
+                <NormalEconomicsEditor
+                  entryFee={normalEntryFeeDraft}
+                  companyFeePerCartela={normalCommissionDraft}
+                  prizePerCartela={computePrizePerCartelaFromEconomics(
+                    normalEntryFeeDraft,
+                    normalCommissionDraft,
+                  )}
+                  onEntryFeeChange={setNormalEntryFeeDraft}
+                  onCommissionChange={setNormalCommissionDraft}
+                />
+                <div className="space-y-2">
+                  <Label htmlFor="normal-max-cartelas">
+                    Max cartelas per player (optional)
+                  </Label>
+                  <Input
+                    id="normal-max-cartelas"
+                    type="number"
+                    min={1}
+                    max={100}
+                    placeholder="Unlimited"
+                    value={normalMaxCartelasPerPlayer}
+                    onChange={(event) =>
+                      setNormalMaxCartelasPerPlayer(event.target.value)
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave empty for no limit. When set, each player can register
+                    at most this many cartelas in the game.
+                  </p>
+                </div>
+              </div>
             ) : null}
 
             {createGameCategory === "BIG_GAME" ? (
@@ -4583,6 +4608,21 @@ export function GameOperations() {
                     setCreateGameError(economicsError);
                     return;
                   }
+
+                  const normalMaxRaw = normalMaxCartelasPerPlayer.trim();
+                  if (normalMaxRaw.length > 0) {
+                    const maxCartelas = Number(normalMaxRaw);
+                    if (
+                      !Number.isInteger(maxCartelas) ||
+                      maxCartelas < 1 ||
+                      maxCartelas > 100
+                    ) {
+                      setCreateGameError(
+                        "Max cartelas per player must be an integer from 1 to 100, or leave empty for unlimited.",
+                      );
+                      return;
+                    }
+                  }
                 }
 
                 const defaults = getCreateFormDefaults(
@@ -4628,6 +4668,14 @@ export function GameOperations() {
                           ),
                           autoCallIntervalSeconds: Number(
                             defaults.autoCallIntervalSeconds,
+                          ),
+                        }
+                      : {}),
+                    ...(createGameCategory === "NORMAL" &&
+                    normalMaxCartelasPerPlayer.trim().length > 0
+                      ? {
+                          maxCartelasPerPlayer: Number(
+                            normalMaxCartelasPerPlayer.trim(),
                           ),
                         }
                       : {}),
