@@ -153,6 +153,8 @@ export interface GameOperationItem {
   operationMode: "MANUAL" | "AUTO";
   registrationDurationSeconds: number | null;
   autoCallIntervalSeconds: number | null;
+  /** Present for Big Game READY/registration sessions (and some session snapshots). */
+  registrationOpensAt?: string | null;
   scheduledStartAt: string | null;
   canStart: boolean;
   canRegister: boolean;
