@@ -726,12 +726,50 @@ export interface GamesReport {
   winners: GamesReportWinner[];
 }
 
-export type BingoClaimStatus = "PENDING" | "VALID" | "INVALID";
+export type BingoClaimStatus =
+  | "PENDING"
+  | "CHECKING"
+  | "VALID"
+  | "INVALID"
+  | "FAILED"
+  | "ALREADY_RESOLVED";
 
 export interface BingoClaimUserSummary {
   id: string;
   fullName: string;
   phoneNumber: string;
+}
+
+export interface AdminBingoAttempt {
+  id: string;
+  claimAttemptId: string;
+  gameSessionId: string;
+  gameCartelaId: string;
+  userId: string;
+  attemptNumber: number;
+  status: BingoClaimStatus;
+  receivedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  ballAtReceipt: string | null;
+  receiptBallLetter: string | null;
+  receiptBallNumber: number | null;
+  receiptCalledOrder: number | null;
+  calledNumbersCountAtReceipt: number | null;
+  reasonCode: string | null;
+  reason: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  checkedPattern: string | null;
+  user: BingoClaimUserSummary;
+  cartelaNumber: number;
+  gameCartelaStatus: string;
+}
+
+export interface AdminSessionBingoAttemptsResponse {
+  sessionId: string;
+  attemptCount: number;
+  items: AdminBingoAttempt[];
 }
 
 export interface GameTimingConfig {

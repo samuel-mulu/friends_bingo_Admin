@@ -658,6 +658,9 @@ export function GameOperations() {
   const liveGame = operations?.liveGame;
   const checkingGame = operations?.checkingGame;
   const registrationOpenGame = operations?.registrationOpenGame;
+  const bigGameOpsRegistration = isBigGameOperationItem(registrationOpenGame)
+    ? registrationOpenGame
+    : null;
   const standardRegistrationOpenGame = isBigGameOperationItem(
     registrationOpenGame,
   )
@@ -832,18 +835,22 @@ export function GameOperations() {
         interRoundDelaySeconds:
           scheduledBigGame?.interRoundDelaySeconds ?? null,
         nextRegSessionId:
+          bigGameOpsRegistration?.sessionId ??
           operations?.bigGameNextRegistration?.sessionId ??
           scheduledBigGame?.nextRoundRegistration?.sessionId ??
           null,
         nextRegRoundIndex:
+          bigGameOpsRegistration?.roundIndex ??
           operations?.bigGameNextRegistration?.roundIndex ??
           scheduledBigGame?.nextRoundRegistration?.roundIndex ??
           null,
         nextRegOpensAt:
+          bigGameOpsRegistration?.registrationOpensAt ??
           operations?.bigGameNextRegistration?.registrationOpensAt ??
           scheduledBigGame?.nextRoundRegistration?.registrationOpensAt ??
           null,
         nextRegPlayStartsAt:
+          bigGameOpsRegistration?.scheduledStartAt ??
           operations?.bigGameNextRegistration?.scheduledStartAt ??
           scheduledBigGame?.nextRoundRegistration?.scheduledStartAt ??
           null,
@@ -860,6 +867,8 @@ export function GameOperations() {
     operations?.operationsState,
     queue.length,
     registrationOpenGame,
+    bigGameOpsRegistration?.sessionId,
+    bigGameOpsRegistration?.roundIndex,
     scheduledBigGame?.interRoundDelaySeconds,
     scheduledBigGame?.nextRoundRegistration?.registrationOpensAt,
     scheduledBigGame?.nextRoundRegistration?.roundIndex,
@@ -1273,34 +1282,73 @@ export function GameOperations() {
 
   const showScheduledBigGameCard =
     scheduledBigGame != null && !isBigGameOperationItem(currentGame);
-  const liveBigGameNextRegistration =
-    isBigGameOperationItem(currentGame) &&
-    currentGame?.playerStatus !== "finished" &&
-    currentGame?.playerStatus !== "cancelled"
-      ? (scheduledBigGame?.nextRoundRegistration ??
-        (operations?.bigGameNextRegistration
-          ? {
-              sessionId: operations.bigGameNextRegistration.sessionId,
-              gameSlotId: operations.bigGameNextRegistration.slotId,
-              staticCode: operations.bigGameNextRegistration.staticCode,
-              playCode: operations.bigGameNextRegistration.playCode,
-              name: scheduledBigGame?.name ?? "Big Game",
-              status: "READY",
-              category: "BIG_GAME" as const,
-              entryFee: scheduledBigGame?.entryFee ?? "0",
-              prizeAmount: "0",
-              fixedPrizeAmount: scheduledBigGame?.fixedPrizeAmount ?? null,
-              registeredCartelasCount:
-                operations.bigGameNextRegistration.registeredCartelasCount,
-              registrationOpensAt:
-                operations.bigGameNextRegistration.registrationOpensAt,
-              scheduledStartAt:
-                operations.bigGameNextRegistration.scheduledStartAt,
-              roundCount: operations.bigGameNextRegistration.roundCount ?? undefined,
-              roundIndex: operations.bigGameNextRegistration.roundIndex,
-            }
-          : null))
-      : null;
+  const liveBigGameNextRegistration = useMemo(() => {
+    if (bigGameOpsRegistration) {
+      return {
+        sessionId: bigGameOpsRegistration.sessionId,
+        gameSlotId: bigGameOpsRegistration.slotId,
+        staticCode: bigGameOpsRegistration.staticCode,
+        playCode: bigGameOpsRegistration.playCode,
+        name: scheduledBigGame?.name ?? "Big Game",
+        status: "READY" as const,
+        category: "BIG_GAME" as const,
+        entryFee: bigGameOpsRegistration.entryFee ?? scheduledBigGame?.entryFee ?? "0",
+        prizeAmount: bigGameOpsRegistration.prizeAmount ?? "0",
+        fixedPrizeAmount:
+          bigGameOpsRegistration.fixedPrizeAmount ??
+          scheduledBigGame?.fixedPrizeAmount ??
+          null,
+        registeredCartelasCount: bigGameOpsRegistration.registeredCartelasCount,
+        registrationOpensAt: bigGameOpsRegistration.registrationOpensAt,
+        scheduledStartAt: bigGameOpsRegistration.scheduledStartAt,
+        roundCount:
+          bigGameOpsRegistration.roundCount ??
+          scheduledBigGame?.roundCount ??
+          undefined,
+        roundIndex: bigGameOpsRegistration.roundIndex,
+      };
+    }
+
+    if (
+      !isBigGameOperationItem(currentGame) ||
+      currentGame?.playerStatus === "finished" ||
+      currentGame?.playerStatus === "cancelled"
+    ) {
+      return null;
+    }
+
+    return (
+      scheduledBigGame?.nextRoundRegistration ??
+      (operations?.bigGameNextRegistration
+        ? {
+            sessionId: operations.bigGameNextRegistration.sessionId,
+            gameSlotId: operations.bigGameNextRegistration.slotId,
+            staticCode: operations.bigGameNextRegistration.staticCode,
+            playCode: operations.bigGameNextRegistration.playCode,
+            name: scheduledBigGame?.name ?? "Big Game",
+            status: "READY" as const,
+            category: "BIG_GAME" as const,
+            entryFee: scheduledBigGame?.entryFee ?? "0",
+            prizeAmount: "0",
+            fixedPrizeAmount: scheduledBigGame?.fixedPrizeAmount ?? null,
+            registeredCartelasCount:
+              operations.bigGameNextRegistration.registeredCartelasCount,
+            registrationOpensAt:
+              operations.bigGameNextRegistration.registrationOpensAt,
+            scheduledStartAt:
+              operations.bigGameNextRegistration.scheduledStartAt,
+            roundCount:
+              operations.bigGameNextRegistration.roundCount ?? undefined,
+            roundIndex: operations.bigGameNextRegistration.roundIndex,
+          }
+        : null)
+    );
+  }, [
+    bigGameOpsRegistration,
+    currentGame,
+    operations?.bigGameNextRegistration,
+    scheduledBigGame,
+  ]);
   const showLiveBigGameNextRegistrationCard =
     liveBigGameNextRegistration != null;
   const hasActiveBigGame =
@@ -4062,10 +4110,11 @@ export function GameOperations() {
                     roundRuleIds={bigGameRoundRuleIds}
                     fallbackRuleId={selectedRuleId}
                     activeGameRules={activeGameRules}
+                    hideInterRoundDelay
                     interRoundDelaySeconds={bigGameInterRoundDelaySeconds}
                     minDelaySeconds={BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS}
                     maxDelaySeconds={BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS}
-                    delayHelpText="After a round finishes (summary), how long until the next round auto-starts. Next-round registration opens only in that inter-round window — not while the prior round is still live."
+                    delayHelpText=""
                     onInterRoundDelayChange={setBigGameInterRoundDelaySeconds}
                     onRoundPrizeChange={(index, value) =>
                       setBigGameRoundPrizes((current) =>
@@ -4090,6 +4139,13 @@ export function GameOperations() {
                       }
                     }}
                   />
+                ) : null}
+                {Number(bigGameRoundCount) > 1 ? (
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    After each round finishes, the next round registration window
+                    uses the global registration duration from Game Timing settings
+                    (same as normal AUTO games).
+                  </p>
                 ) : null}
               </div>
             ) : null}
@@ -4392,23 +4448,6 @@ export function GameOperations() {
                       ? roundGameRuleIds[0]
                       : selectedRuleId;
 
-                  const interRoundDelaySeconds =
-                    roundCount > 1
-                      ? Number(bigGameInterRoundDelaySeconds)
-                      : undefined;
-                  if (roundCount > 1) {
-                    if (
-                      !Number.isInteger(interRoundDelaySeconds) ||
-                      (interRoundDelaySeconds ?? 0) < 60 ||
-                      (interRoundDelaySeconds ?? 0) > 3600
-                    ) {
-                      setCreateGameError(
-                        "Inter-round delay must be between 60 and 3600 seconds.",
-                      );
-                      return;
-                    }
-                  }
-
                   const registrationOpensAt = datetimeLocalToIso(
                     bigGameRegistrationOpensAt,
                   );
@@ -4446,7 +4485,6 @@ export function GameOperations() {
                         ? {
                             roundPrizes,
                             roundGameRuleIds,
-                            interRoundDelaySeconds,
                           }
                         : {}),
                     },
@@ -5424,6 +5462,7 @@ function RoundConfigEditor({
   onRoundPrizeChange,
   onRoundRuleChange,
   onInterRoundDelayChange,
+  hideInterRoundDelay = false,
 }: {
   idPrefix: string;
   roundPrizes: string[];
@@ -5437,23 +5476,26 @@ function RoundConfigEditor({
   onRoundPrizeChange: (index: number, value: string) => void;
   onRoundRuleChange: (index: number, value: string) => void;
   onInterRoundDelayChange: (value: string) => void;
+  hideInterRoundDelay?: boolean;
 }) {
   return (
     <>
-      <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-inter-round-delay`}>
-          Inter-round delay (seconds)
-        </Label>
-        <Input
-          id={`${idPrefix}-inter-round-delay`}
-          type="number"
-          min={minDelaySeconds}
-          max={maxDelaySeconds}
-          value={interRoundDelaySeconds}
-          onChange={(event) => onInterRoundDelayChange(event.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">{delayHelpText}</p>
-      </div>
+      {!hideInterRoundDelay ? (
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-inter-round-delay`}>
+            Inter-round delay (seconds)
+          </Label>
+          <Input
+            id={`${idPrefix}-inter-round-delay`}
+            type="number"
+            min={minDelaySeconds}
+            max={maxDelaySeconds}
+            value={interRoundDelaySeconds}
+            onChange={(event) => onInterRoundDelayChange(event.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">{delayHelpText}</p>
+        </div>
+      ) : null}
       <div className="space-y-3 sm:col-span-2">
         <Label>Round prize and game rule</Label>
         <div className="grid gap-3">

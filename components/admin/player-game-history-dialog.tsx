@@ -17,6 +17,7 @@ import type {
 } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { AdminPagination } from "@/components/admin/admin-pagination";
+import { SessionBingoAttemptsSection } from "@/components/admin/session-bingo-attempts-section";
 import {
   AdminEmptyState,
   AdminErrorState,
@@ -410,6 +411,11 @@ function PlayerGameSessionDetailDialog({
                   </div>
                 </div>
               ) : null}
+
+              <SessionBingoAttemptsSection
+                sessionId={sessionId}
+                enabled={open && Boolean(sessionId)}
+              />
 
               <div className="space-y-2 rounded-xl border border-border/60 p-3">
                 <div className="flex items-center justify-between gap-2">

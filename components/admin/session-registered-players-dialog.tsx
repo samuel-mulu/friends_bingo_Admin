@@ -13,6 +13,11 @@ import {
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type { SessionWinnerResultItem } from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
+import {
+  AdminEmptyState,
+  AdminErrorState,
+} from "@/components/admin/admin-table-state";
+import { SessionBingoAttemptsSection } from "@/components/admin/session-bingo-attempts-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -297,6 +302,13 @@ export function SessionRegisteredPlayersDialog({
                 ))}
               </ul>
             )}
+
+            <div className="mt-6 border-t border-border/60 pt-4">
+              <SessionBingoAttemptsSection
+                sessionId={sessionId}
+                enabled={open && Boolean(sessionId)}
+              />
+            </div>
           </div>
 
           <DialogFooter className="border-t px-6 py-3">

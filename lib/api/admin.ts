@@ -1,6 +1,7 @@
 import { apiPaginatedRequest, apiRequest } from "@/lib/api/client";
 import type {
   AdminBingoClaim,
+  AdminSessionBingoAttemptsResponse,
   AdminBroadcast,
   AdminExpense,
   AdminGame,
@@ -824,6 +825,13 @@ export function getAdminBingoClaims(page = 1, pageSize = 20) {
     url: "/admin/bingo-claims",
     method: "GET",
     params: { page, pageSize },
+  });
+}
+
+export function getAdminSessionBingoAttempts(sessionId: string) {
+  return apiRequest<AdminSessionBingoAttemptsResponse>({
+    url: `/admin/sessions/${sessionId}/bingo-attempts`,
+    method: "GET",
   });
 }
 
