@@ -215,9 +215,6 @@ function computePrizePerCartelaFromEconomics(
   return prize >= 0 ? prize.toFixed(2).replace(/\.00$/, "") : "0";
 }
 
-const BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS = 60;
-const BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS = 3600;
-
 /** A one-round chain is just a Big GOTD, so the backend rejects it. */
 const CHAIN_GAME_MIN_ROUND_COUNT = 2;
 const CHAIN_GAME_MIN_INTER_ROUND_DELAY_SECONDS = 5;
@@ -525,8 +522,6 @@ export function GameOperations() {
   const [bigGameRoundCount, setBigGameRoundCount] = useState("1");
   const [bigGameRoundPrizes, setBigGameRoundPrizes] = useState<string[]>([""]);
   const [bigGameRoundRuleIds, setBigGameRoundRuleIds] = useState<string[]>([]);
-  const [bigGameInterRoundDelaySeconds, setBigGameInterRoundDelaySeconds] =
-    useState("300");
   const [chainGameEntryFee, setChainGameEntryFee] = useState("");
   const [chainGameFixedPrizeAmount, setChainGameFixedPrizeAmount] =
     useState("");
@@ -3268,7 +3263,7 @@ export function GameOperations() {
                 <p className="text-sm text-muted-foreground">
                   {liveBigGameNextRegistration.scheduledStartAt
                     ? `Play starts ${formatDateTime(liveBigGameNextRegistration.scheduledStartAt)}`
-                    : "Registration open — starts after the current round finishes."}
+                    : "Registration open while the current round is live — play start arms from Game Timing after this round finishes."}
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {liveBigGameNextRegistration.registeredCartelasCount} cartelas
@@ -3338,7 +3333,8 @@ export function GameOperations() {
                   </p>
                 ) : null}
                 <p className="text-sm text-muted-foreground">
-                  Managed on its own schedule — not part of the normal queue.
+                  Round 1 uses its own create schedule — not part of the normal
+                  queue. Later rounds open as next READY from Game Timing.
                 </p>
                 {(scheduledBigGame.roundCount ?? 1) > 0 ? (
                   <div className="space-y-1 pt-1">
@@ -3419,13 +3415,14 @@ export function GameOperations() {
                   </LoadingButton>
                 ) : null}
                 {scheduledBigGame.status === "READY" &&
+                (scheduledBigGame.roundIndex ?? 1) <= 1 &&
                 !bigGameScheduleEditing ? (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={startBigGameScheduleEdit}
                   >
-                    Edit schedule
+                    Edit Round 1 schedule
                   </Button>
                 ) : null}
                 <LoadingButton
@@ -3532,7 +3529,7 @@ export function GameOperations() {
                 }
               />
               <RegistrationStatCard
-                label="Registration opens"
+                label="Round 1 registration opens"
                 value={
                   bigGameScheduleEditing ? (
                     <Input
@@ -3551,7 +3548,7 @@ export function GameOperations() {
                 }
               />
               <RegistrationStatCard
-                label="Play starts"
+                label="Round 1 play starts"
                 value={
                   bigGameScheduleEditing ? (
                     <Input
@@ -3821,7 +3818,6 @@ export function GameOperations() {
             setBigGameRoundCount("1");
             setBigGameRoundPrizes([""]);
             setBigGameRoundRuleIds([]);
-            setBigGameInterRoundDelaySeconds("300");
             setChainGameEntryFee("");
             setChainGameFixedPrizeAmount("");
             setChainGameMaxCartelasPerPlayer("5");
@@ -4054,7 +4050,7 @@ export function GameOperations() {
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="big-game-registration-opens">
-                    Registration opens
+                    Round 1 registration opens
                   </Label>
                   <Input
                     id="big-game-registration-opens"
@@ -4066,7 +4062,9 @@ export function GameOperations() {
                   />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor="big-game-play-start">Play starts</Label>
+                  <Label htmlFor="big-game-play-start">
+                    Round 1 play starts
+                  </Label>
                   <Input
                     id="big-game-play-start"
                     type="datetime-local"
@@ -4111,11 +4109,6 @@ export function GameOperations() {
                     fallbackRuleId={selectedRuleId}
                     activeGameRules={activeGameRules}
                     hideInterRoundDelay
-                    interRoundDelaySeconds={bigGameInterRoundDelaySeconds}
-                    minDelaySeconds={BIG_GAME_MIN_INTER_ROUND_DELAY_SECONDS}
-                    maxDelaySeconds={BIG_GAME_MAX_INTER_ROUND_DELAY_SECONDS}
-                    delayHelpText=""
-                    onInterRoundDelayChange={setBigGameInterRoundDelaySeconds}
                     onRoundPrizeChange={(index, value) =>
                       setBigGameRoundPrizes((current) =>
                         current.map((item, itemIndex) =>
@@ -4142,9 +4135,10 @@ export function GameOperations() {
                 ) : null}
                 {Number(bigGameRoundCount) > 1 ? (
                   <p className="text-xs text-muted-foreground sm:col-span-2">
-                    After each round finishes, the next round registration window
-                    uses the global registration duration from Game Timing settings
-                    (same as normal AUTO games).
+                    Round 1 uses the schedule above. When a round starts, the next
+                    round opens as READY for missed players; after that round
+                    finishes, play start uses the global registration duration
+                    from Game Timing (same as normal AUTO games).
                   </p>
                 ) : null}
               </div>
@@ -5469,18 +5463,23 @@ function RoundConfigEditor({
   roundRuleIds: string[];
   fallbackRuleId: string;
   activeGameRules: GameRuleSummary[];
-  interRoundDelaySeconds: string;
-  minDelaySeconds: number;
-  maxDelaySeconds: number;
-  delayHelpText: string;
+  /** Required when delay UI is shown (Chain Game). Unused for Big Game. */
+  interRoundDelaySeconds?: string;
+  minDelaySeconds?: number;
+  maxDelaySeconds?: number;
+  delayHelpText?: string;
   onRoundPrizeChange: (index: number, value: string) => void;
   onRoundRuleChange: (index: number, value: string) => void;
-  onInterRoundDelayChange: (value: string) => void;
+  onInterRoundDelayChange?: (value: string) => void;
   hideInterRoundDelay?: boolean;
 }) {
   return (
     <>
-      {!hideInterRoundDelay ? (
+      {!hideInterRoundDelay &&
+      interRoundDelaySeconds != null &&
+      minDelaySeconds != null &&
+      maxDelaySeconds != null &&
+      onInterRoundDelayChange ? (
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-inter-round-delay`}>
             Inter-round delay (seconds)
@@ -5493,7 +5492,9 @@ function RoundConfigEditor({
             value={interRoundDelaySeconds}
             onChange={(event) => onInterRoundDelayChange(event.target.value)}
           />
-          <p className="text-xs text-muted-foreground">{delayHelpText}</p>
+          {delayHelpText ? (
+            <p className="text-xs text-muted-foreground">{delayHelpText}</p>
+          ) : null}
         </div>
       ) : null}
       <div className="space-y-3 sm:col-span-2">

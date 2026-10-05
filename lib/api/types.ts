@@ -548,7 +548,7 @@ export interface CreateGamePayload {
   roundPrizes?: string[];
   /** BIG_GAME: GameRule id per round; length must equal roundCount; [0] must equal gameRuleId. */
   roundGameRuleIds?: string[];
-  /** BIG_GAME: delay before auto-starting the next round when roundCount > 1. */
+  /** CHAIN_GAME: pause between rounds. Not used for Big Game (Round 2+ uses Game Timing). */
   interRoundDelaySeconds?: number;
   /** NORMAL / BONUS / BIG_GOTD: force-grant Big Tickets from winner prizes into the active Big Game. */
   forceBigGameEnabled?: boolean;
