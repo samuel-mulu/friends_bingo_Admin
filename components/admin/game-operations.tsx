@@ -462,6 +462,10 @@ import {
 } from "@/lib/admin/game-operations-realtime";
 import { createOperationsFallbackController } from "@/lib/admin/operations-fallback-controller";
 import {
+  resolveBigGameNextRoundStartLabel,
+  shouldShowScheduledBigGameCard,
+} from "@/lib/admin/big-game-round-card";
+import {
   addWinnerWindowPreviewCartela,
   clearWinnerWindowPreviewSession,
   extractWinnerWindowPreviewCartela,
@@ -1275,8 +1279,6 @@ export function GameOperations() {
     );
   }, [standardRegistrationOpenGame, queue]);
 
-  const showScheduledBigGameCard =
-    scheduledBigGame != null && !isBigGameOperationItem(currentGame);
   const liveBigGameNextRegistration = useMemo(() => {
     if (bigGameOpsRegistration) {
       return {
@@ -1346,6 +1348,14 @@ export function GameOperations() {
   ]);
   const showLiveBigGameNextRegistrationCard =
     liveBigGameNextRegistration != null;
+  // After a round finishes, prefer the real next-round READY/live card
+  // (above) over the stale FINISHED round — Round 1 stays available via
+  // history/report, not as the primary operational card here.
+  const showScheduledBigGameCard = shouldShowScheduledBigGameCard({
+    scheduledBigGame,
+    currentGameIsBigGame: isBigGameOperationItem(currentGame),
+    hasResolvableNextRound: liveBigGameNextRegistration != null,
+  });
   const hasActiveBigGame =
     scheduledBigGame != null || isBigGameOperationItem(currentGame);
 
@@ -3354,19 +3364,16 @@ export function GameOperations() {
                         </p>
                       ) : null;
                     })()}
-                    {scheduledBigGame.nextRoundStartsAt ||
-                    ((scheduledBigGame.roundIndex ?? 1) > 1 &&
-                      scheduledBigGame.scheduledStartAt) ? (
-                      <p className="text-sm text-muted-foreground">
-                        {(scheduledBigGame.roundIndex ?? 1) > 1
-                          ? "Play starts "
-                          : "Next round starts "}
-                        {formatDateTime(
-                          scheduledBigGame.scheduledStartAt ??
-                            scheduledBigGame.nextRoundStartsAt,
-                        )}
-                      </p>
-                    ) : null}
+                    {(() => {
+                      const nextRoundStart =
+                        resolveBigGameNextRoundStartLabel(scheduledBigGame);
+                      return nextRoundStart ? (
+                        <p className="text-sm text-muted-foreground">
+                          {nextRoundStart.label}{" "}
+                          {formatDateTime(nextRoundStart.value)}
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 ) : null}
               </div>
