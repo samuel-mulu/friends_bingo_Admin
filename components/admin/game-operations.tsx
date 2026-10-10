@@ -3275,10 +3275,31 @@ export function GameOperations() {
                     ? `Play starts ${formatDateTime(liveBigGameNextRegistration.scheduledStartAt)}`
                     : "Registration open while the current round is live — play start arms from Game Timing after this round finishes."}
                 </p>
-                <p className="text-sm text-muted-foreground">
-                  {liveBigGameNextRegistration.registeredCartelasCount} cartelas
-                  registered for this round
-                </p>
+                <button
+                  type="button"
+                  className="text-left text-sm text-muted-foreground transition hover:text-violet-800 disabled:cursor-default"
+                  disabled={!liveBigGameNextRegistration.sessionId}
+                  onClick={() => {
+                    if (!liveBigGameNextRegistration.sessionId) {
+                      return;
+                    }
+                    setRegisteredPlayersDialog({
+                      sessionId: liveBigGameNextRegistration.sessionId,
+                      label: `${liveBigGameNextRegistration.staticCode}${
+                        liveBigGameNextRegistration.playCode
+                          ? ` / ${liveBigGameNextRegistration.playCode}`
+                          : ""
+                      }`,
+                    });
+                  }}
+                >
+                  <Users className="mr-1 inline h-4 w-4" />
+                  {liveBigGameNextRegistration.registeredCartelasCount}{" "}
+                  cartelas registered for this round
+                  {liveBigGameNextRegistration.sessionId
+                    ? " · view players"
+                    : ""}
+                </button>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <LoadingButton
