@@ -53,6 +53,10 @@ export function pageTitleFromPath(pathname: string) {
     return "Game Reports";
   }
 
+  if (pathname === "/big-game" || pathname.startsWith("/big-game/")) {
+    return "Big Game";
+  }
+
   const item =
     [...adminNavigation, ...adminSecondaryNavigation].find(
       (entry) =>

@@ -1904,7 +1904,7 @@ export function GameOperations({
       setIsCreateGameModalOpen(false);
       setCreateGameError(null);
       if (lastCreateCategoryRef.current === "BIG_GAME") {
-        adminToast.success("Big Game scheduled.");
+        adminToast.success("Big Game created.");
       } else {
         adminToast.success("Game added to queue.");
         scrollToQueueAfterCreateRef.current = true;
@@ -2448,28 +2448,65 @@ export function GameOperations({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
-          <OperationModeHeaderControl
-            value={headerOperationMode}
-            onChange={handleDefaultOperationModeChange}
-            isLoading={
-              applyOperationModeToCurrentGame.isPending ||
-              Boolean(operationModeLockReason)
-            }
-            focusedGameLabel={
-              operationModeLockReason ??
-              focusedGame?.playCode ??
-              focusedGame?.staticCode ??
-              null
-            }
-          />
-          <Button onClick={openCreateGameModal} className="shrink-0 self-start">
-            <Plus className="mr-2 h-4 w-4" />
-            {isBigGameSurface ? "Schedule Big Game" : "Add Game to Queue"}
-          </Button>
+      {isBigGameSurface ? (
+        <Card className="border-violet-200/80">
+          <CardHeader className="gap-3 border-b border-violet-100/80 pb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <CardTitle className="flex items-center gap-2 text-violet-950">
+                  <Trophy className="h-5 w-5 text-violet-600" />
+                  Big Game
+                </CardTitle>
+                <CardDescription>
+                  Schedule and run Big Game on its own lane. Money and ticket
+                  registration stay here — separate from the standard Games
+                  queue.
+                </CardDescription>
+              </div>
+              <Button
+                onClick={openCreateGameModal}
+                disabled={hasActiveBigGame}
+                className="shrink-0 self-start bg-violet-700 text-white hover:bg-violet-800 disabled:opacity-60"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Create Big Game
+              </Button>
+            </div>
+            {hasActiveBigGame ? (
+              <p className="text-sm text-muted-foreground">
+                A Big Game is already scheduled. Finish or cancel it before
+                creating another.
+              </p>
+            ) : null}
+          </CardHeader>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 rounded-lg border bg-card p-4 lg:flex-row lg:items-center lg:justify-between">
+            <OperationModeHeaderControl
+              value={headerOperationMode}
+              onChange={handleDefaultOperationModeChange}
+              isLoading={
+                applyOperationModeToCurrentGame.isPending ||
+                Boolean(operationModeLockReason)
+              }
+              focusedGameLabel={
+                operationModeLockReason ??
+                focusedGame?.playCode ??
+                focusedGame?.staticCode ??
+                null
+              }
+            />
+            <Button
+              onClick={openCreateGameModal}
+              className="shrink-0 self-start"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Game to Queue
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {isStandardSurface && bigGameLiveElsewhere ? (
         <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-3 text-sm text-violet-950 sm:flex-row sm:items-center sm:justify-between">
@@ -2489,11 +2526,10 @@ export function GameOperations({
       scheduledBigGame.status === "READY" ? (
         <div className="flex flex-col gap-2 rounded-lg border border-violet-100 bg-violet-50/40 px-4 py-2 text-sm text-violet-900 sm:flex-row sm:items-center sm:justify-between">
           <span>
-            Big Game registration is open on its own schedule — it does not
-            own this queue.
+            Big Game registration is open — managed on the Big Game page.
           </span>
           <Button asChild variant="ghost" size="sm" className="self-start">
-            <Link href="/big-game">Manage Big Game</Link>
+            <Link href="/big-game">Open Big Game</Link>
           </Button>
         </div>
       ) : null}
@@ -3792,12 +3828,15 @@ export function GameOperations({
                   No Big Game scheduled
                 </p>
                 <p className="mb-4 text-sm text-muted-foreground">
-                  Schedule a Big Game with its own registration window. It does
+                  Create a Big Game with its own registration window. It does
                   not join the standard FIFO queue.
                 </p>
-                <Button onClick={openCreateGameModal} variant="outline">
+                <Button
+                  onClick={openCreateGameModal}
+                  className="bg-violet-700 text-white hover:bg-violet-800"
+                >
                   <Plus className="mr-2 h-4 w-4" />
-                  Schedule Big Game
+                  Create Big Game
                 </Button>
               </CardContent>
             </Card>
@@ -3951,7 +3990,7 @@ export function GameOperations({
           setIsCreateGameModalOpen(open);
           if (!open) {
             setCreateGameError(null);
-            setCreateGameCategory("NORMAL");
+            setCreateGameCategory(isBigGameSurface ? "BIG_GAME" : "NORMAL");
             setBonusFixedPrizeAmount("");
             setBonusMaxCartelasPerPlayer("5");
             setBigGotdEntryFee("");
@@ -3989,11 +4028,11 @@ export function GameOperations({
         >
           <DialogHeader className="shrink-0 border-b px-6 py-4 pr-12">
             <DialogTitle>
-              {isBigGameSurface ? "Schedule Big Game" : "Add Game to Queue"}
+              {isBigGameSurface ? "Create Big Game" : "Add Game to Queue"}
             </DialogTitle>
             <DialogDescription>
               {createGameCategory === "BIG_GAME"
-                ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time. Managed on the Big Game page — outside the standard FIFO queue."
+                ? "Set entry fee, prize pool, registration open time, and play start. Big Game stays outside the standard FIFO queue."
                 : createGameCategory === "CHAIN_GAME"
                   ? "Create a paid multi-round game that plays every round in one continuous draw. Balls and marked cells carry over; only the pattern and prize change between rounds. Queued and auto-called like a Big GOTD."
                   : createGameCategory === "BIG_GOTD"
@@ -4005,39 +4044,27 @@ export function GameOperations({
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-6 py-4">
-            <div className="space-y-2">
-              <Label>Game type</Label>
-              <Select
-                value={createGameCategory}
-                onValueChange={(value) =>
-                  setCreateGameCategory(value as GameCategory)
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a game type" />
-                </SelectTrigger>
-                <SelectContent position="popper" className="z-[100]">
-                  {isStandardSurface ? (
-                    <>
-                      <SelectItem value="NORMAL">Normal Game</SelectItem>
-                      <SelectItem value="BONUS">Bonus Game</SelectItem>
-                      <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
-                      <SelectItem value="CHAIN_GAME">Chain Game</SelectItem>
-                    </>
-                  ) : (
-                    <SelectItem value="BIG_GAME" disabled={hasActiveBigGame}>
-                      Big Game
-                      {hasActiveBigGame ? " (already scheduled)" : ""}
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {hasActiveBigGame ? (
-                <p className="text-sm text-muted-foreground">
-                  A Big Game is already scheduled.
-                </p>
-              ) : null}
-            </div>
+            {isStandardSurface ? (
+              <div className="space-y-2">
+                <Label>Game type</Label>
+                <Select
+                  value={createGameCategory}
+                  onValueChange={(value) =>
+                    setCreateGameCategory(value as GameCategory)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a game type" />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="z-[100]">
+                    <SelectItem value="NORMAL">Normal Game</SelectItem>
+                    <SelectItem value="BONUS">Bonus Game</SelectItem>
+                    <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
+                    <SelectItem value="CHAIN_GAME">Chain Game</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label>
@@ -4877,11 +4904,19 @@ export function GameOperations({
                 });
               }}
               isLoading={createGame.isPending}
-              loadingLabel="Adding..."
-              disabled={activeGameRules.length === 0}
+              loadingLabel={isBigGameSurface ? "Creating..." : "Adding..."}
+              disabled={
+                activeGameRules.length === 0 ||
+                (isBigGameSurface && hasActiveBigGame)
+              }
+              className={
+                isBigGameSurface
+                  ? "bg-violet-700 text-white hover:bg-violet-800"
+                  : undefined
+              }
             >
               <Plus className="mr-2 h-4 w-4" />
-              Add to Queue
+              {isBigGameSurface ? "Create Big Game" : "Add to Queue"}
             </LoadingButton>
           </DialogFooter>
         </DialogContent>
