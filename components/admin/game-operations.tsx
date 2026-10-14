@@ -7,12 +7,19 @@
  * which returns the exact same game selection for both Admin and Flutter.
  *
  * Backend decides priority: PLAYING > CHECKING > READY > NEXT
- * Frontend MUST NOT apply additional filtering or sorting.
+ * Frontend MUST NOT invent a second live draw. Presentation may promote a
+ * standard READY queue head when an older backend still parks Big Game in
+ * registrationOpenGame during advance registration (see
+ * resolveStandardRegistrationOpenGame).
  *
- * Sections:
- * A. CURRENT GAME = liveGame or checkingGame
- * B. NEXT REGISTRATION = registrationOpenGame (when not the current game)
- * C. QUEUE = response.queue
+ * Surfaces:
+ * - standard (/games): Normal, Bonus, GOTD, Chain FIFO
+ * - bigGame (/big-game): scheduled Big Game lane only
+ *
+ * Sections (standard):
+ * A. CURRENT GAME = non–Big Game liveGame or checkingGame
+ * B. NEXT REGISTRATION = standard registration head
+ * C. QUEUE = response.queue (non–Big Game)
  */
 
 import {
@@ -23,6 +30,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import {
   keepPreviousData,
   useQuery,
@@ -465,6 +473,7 @@ import {
   resolveBigGameNextRoundStartLabel,
   shouldShowScheduledBigGameCard,
 } from "@/lib/admin/big-game-round-card";
+import { resolveStandardRegistrationOpenGame } from "@/lib/admin/standard-registration-head";
 import {
   addWinnerWindowPreviewCartela,
   clearWinnerWindowPreviewSession,
@@ -501,7 +510,15 @@ function logAdminGamesDebug(label: string, payload: Record<string, unknown>) {
   console.info(`[admin-games][page] ${label}`, payload);
 }
 
-export function GameOperations() {
+export type GameOperationsSurface = "standard" | "bigGame";
+
+export function GameOperations({
+  surface = "standard",
+}: {
+  surface?: GameOperationsSurface;
+}) {
+  const isStandardSurface = surface === "standard";
+  const isBigGameSurface = surface === "bigGame";
   const queryClient = useQueryClient();
   const [selectedGameForEdit, setSelectedGameForEdit] = useState<string | null>(
     null,
@@ -657,14 +674,21 @@ export function GameOperations() {
   const liveGame = operations?.liveGame;
   const checkingGame = operations?.checkingGame;
   const registrationOpenGame = operations?.registrationOpenGame;
-  const bigGameOpsRegistration = isBigGameOperationItem(registrationOpenGame)
-    ? registrationOpenGame
-    : null;
-  const standardRegistrationOpenGame = isBigGameOperationItem(
-    registrationOpenGame,
-  )
-    ? null
-    : (registrationOpenGame ?? null);
+  // Round N+1 while Big Game is live may still appear on registrationOpenGame.
+  // Round 1 advance registration must not own the Games "Next registration" lane.
+  const bigGameOpsRegistration =
+    isBigGameOperationItem(registrationOpenGame) &&
+    (registrationOpenGame?.roundIndex ?? 1) > 1
+      ? registrationOpenGame
+      : null;
+  const standardRegistrationOpenGame = useMemo(
+    () =>
+      resolveStandardRegistrationOpenGame(
+        registrationOpenGame,
+        operations?.queue,
+      ),
+    [registrationOpenGame, operations?.queue],
+  );
   const queue = useMemo(() => {
     const rawQueue = (operations?.queue ?? []).filter(
       (item) => !isBigGameOperationItem(item),
@@ -679,6 +703,8 @@ export function GameOperations() {
   }, [operations?.queue, standardRegistrationOpenGame?.slotId]);
   // Big Game finished rounds must not occupy Current Game chrome (backend may
   // briefly re-inject terminal liveGame). Round N+1 READY shows via Big Game card.
+  // On the standard Games surface, live Big Game also stays off Current Game —
+  // manage it on /big-game (intentional cross-link banner below).
   const currentGame = useMemo(() => {
     const raw = liveGame ?? checkingGame ?? null;
     if (
@@ -688,8 +714,25 @@ export function GameOperations() {
     ) {
       return null;
     }
+    if (isStandardSurface && raw && isBigGameOperationItem(raw)) {
+      return null;
+    }
+    if (isBigGameSurface && raw && !isBigGameOperationItem(raw)) {
+      return null;
+    }
     return raw;
-  }, [liveGame, checkingGame]);
+  }, [liveGame, checkingGame, isStandardSurface, isBigGameSurface]);
+  const bigGameLiveElsewhere =
+    isStandardSurface &&
+    isBigGameOperationItem(liveGame ?? checkingGame) &&
+    (liveGame ?? checkingGame)?.playerStatus !== "finished" &&
+    (liveGame ?? checkingGame)?.playerStatus !== "cancelled";
+  const standardLiveBlockingBigGame =
+    isBigGameSurface &&
+    !isBigGameOperationItem(liveGame ?? checkingGame) &&
+    (liveGame ?? checkingGame) != null &&
+    (liveGame ?? checkingGame)?.playerStatus !== "finished" &&
+    (liveGame ?? checkingGame)?.playerStatus !== "cancelled";
   const isWinnerWindow = currentGame?.playerStatus === "winnerWindow";
   const isManualChecking = checkingGame?.gameRule?.key === "MANUAL";
   const [winnerWindowNow, setWinnerWindowNow] = useState(() => Date.now());
@@ -1254,6 +1297,7 @@ export function GameOperations() {
     : Math.max(0, Math.ceil((registrationCloseTime - registrationNow) / 1000));
 
   const showNextRegistration =
+    isStandardSurface &&
     standardRegistrationOpenGame != null &&
     standardRegistrationOpenGame.slotId !== currentGame?.slotId;
   const hasClearableQueue =
@@ -1347,17 +1391,22 @@ export function GameOperations() {
     scheduledBigGame,
   ]);
   const showLiveBigGameNextRegistrationCard =
-    liveBigGameNextRegistration != null;
+    isBigGameSurface && liveBigGameNextRegistration != null;
   // After a round finishes, prefer the real next-round READY/live card
   // (above) over the stale FINISHED round — Round 1 stays available via
   // history/report, not as the primary operational card here.
-  const showScheduledBigGameCard = shouldShowScheduledBigGameCard({
-    scheduledBigGame,
-    currentGameIsBigGame: isBigGameOperationItem(currentGame),
-    hasResolvableNextRound: liveBigGameNextRegistration != null,
-  });
+  // Big Game cards render only on /big-game — never as the Games FIFO head.
+  const showScheduledBigGameCard =
+    isBigGameSurface &&
+    shouldShowScheduledBigGameCard({
+      scheduledBigGame,
+      currentGameIsBigGame: isBigGameOperationItem(currentGame),
+      hasResolvableNextRound: liveBigGameNextRegistration != null,
+    });
   const hasActiveBigGame =
-    scheduledBigGame != null || isBigGameOperationItem(currentGame);
+    scheduledBigGame != null ||
+    isBigGameOperationItem(liveGame ?? checkingGame) ||
+    isBigGameOperationItem(registrationOpenGame);
 
   const { data: gameRules = [] } = useQuery({
     queryKey: ["admin", "game-rules"],
@@ -1770,6 +1819,7 @@ export function GameOperations() {
 
   const openCreateGameModal = () => {
     setCreateGameError(null);
+    setCreateGameCategory(isBigGameSurface ? "BIG_GAME" : "NORMAL");
     setIsCreateGameModalOpen(true);
   };
 
@@ -2416,10 +2466,50 @@ export function GameOperations() {
           />
           <Button onClick={openCreateGameModal} className="shrink-0 self-start">
             <Plus className="mr-2 h-4 w-4" />
-            Add Game to Queue
+            {isBigGameSurface ? "Schedule Big Game" : "Add Game to Queue"}
           </Button>
         </div>
       </div>
+
+      {isStandardSurface && bigGameLiveElsewhere ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-3 text-sm text-violet-950 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Big Game is live. Standard queue waits until it finishes or is
+            cancelled.
+          </span>
+          <Button asChild variant="outline" size="sm" className="self-start">
+            <Link href="/big-game">Open Big Game</Link>
+          </Button>
+        </div>
+      ) : null}
+
+      {isStandardSurface &&
+      !bigGameLiveElsewhere &&
+      scheduledBigGame &&
+      scheduledBigGame.status === "READY" ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-violet-100 bg-violet-50/40 px-4 py-2 text-sm text-violet-900 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Big Game registration is open on its own schedule — it does not
+            own this queue.
+          </span>
+          <Button asChild variant="ghost" size="sm" className="self-start">
+            <Link href="/big-game">Manage Big Game</Link>
+          </Button>
+        </div>
+      ) : null}
+
+      {standardLiveBlockingBigGame ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            A standard game is live (
+            {(liveGame ?? checkingGame)?.staticCode ?? "current round"}). Big
+            Game stays held until that draw ends — shared single-live rule.
+          </span>
+          <Button asChild variant="outline" size="sm" className="self-start">
+            <Link href="/games">Open Games</Link>
+          </Button>
+        </div>
+      ) : null}
 
       {isRateLimited ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
@@ -3252,7 +3342,9 @@ export function GameOperations() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Trophy className="h-5 w-5 text-violet-600" />
                   <CardTitle className="text-violet-950">
-                    Next round registration
+                    {(liveBigGameNextRegistration.roundIndex ?? 2) > 1
+                      ? "Next round registration"
+                      : "Big Game registration"}
                   </CardTitle>
                   <Badge className="bg-violet-100 text-violet-800">
                     Round {liveBigGameNextRegistration.roundIndex ?? 2} of{" "}
@@ -3666,10 +3758,10 @@ export function GameOperations() {
 
       {/* Empty state + queue */}
       <div ref={queueSectionRef} className="scroll-mt-4 space-y-6">
-        {!currentGame &&
+        {isStandardSurface &&
+          !currentGame &&
           !standardRegistrationOpenGame &&
-          queue.length === 0 &&
-          !showScheduledBigGameCard && (
+          queue.length === 0 && (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <div className="mb-4 rounded-full bg-muted p-3">
@@ -3677,7 +3769,7 @@ export function GameOperations() {
                 </div>
                 <p className="text-lg font-medium">No games in queue</p>
                 <p className="mb-4 text-sm text-muted-foreground">
-                  Create a new game to get started
+                  Create a Normal, Bonus, GOTD, or Chain game to get started
                 </p>
                 <Button onClick={openCreateGameModal} variant="outline">
                   <Plus className="mr-2 h-4 w-4" />
@@ -3687,8 +3779,32 @@ export function GameOperations() {
             </Card>
           )}
 
-        {/* C. QUEUE */}
-        {queue.length > 0 && (
+        {isBigGameSurface &&
+          !currentGame &&
+          !showScheduledBigGameCard &&
+          !showLiveBigGameNextRegistrationCard && (
+            <Card className="border-dashed border-violet-200">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="mb-4 rounded-full bg-violet-100 p-3">
+                  <Trophy className="h-6 w-6 text-violet-700" />
+                </div>
+                <p className="text-lg font-medium text-violet-950">
+                  No Big Game scheduled
+                </p>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Schedule a Big Game with its own registration window. It does
+                  not join the standard FIFO queue.
+                </p>
+                <Button onClick={openCreateGameModal} variant="outline">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Schedule Big Game
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+        {/* C. QUEUE — standard FIFO only */}
+        {isStandardSurface && queue.length > 0 && (
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3872,10 +3988,12 @@ export function GameOperations() {
           )}
         >
           <DialogHeader className="shrink-0 border-b px-6 py-4 pr-12">
-            <DialogTitle>Add Game to Queue</DialogTitle>
+            <DialogTitle>
+              {isBigGameSurface ? "Schedule Big Game" : "Add Game to Queue"}
+            </DialogTitle>
             <DialogDescription>
               {createGameCategory === "BIG_GAME"
-                ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time."
+                ? "Schedule a Big Game with entry fee, prize pool, registration open time, and play start time. Managed on the Big Game page — outside the standard FIFO queue."
                 : createGameCategory === "CHAIN_GAME"
                   ? "Create a paid multi-round game that plays every round in one continuous draw. Balls and marked cells carry over; only the pattern and prize change between rounds. Queued and auto-called like a Big GOTD."
                   : createGameCategory === "BIG_GOTD"
@@ -3899,14 +4017,19 @@ export function GameOperations() {
                   <SelectValue placeholder="Select a game type" />
                 </SelectTrigger>
                 <SelectContent position="popper" className="z-[100]">
-                  <SelectItem value="NORMAL">Normal Game</SelectItem>
-                  <SelectItem value="BONUS">Bonus Game</SelectItem>
-                  <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
-                  <SelectItem value="CHAIN_GAME">Chain Game</SelectItem>
-                  <SelectItem value="BIG_GAME" disabled={hasActiveBigGame}>
-                    Big Game
-                    {hasActiveBigGame ? " (already scheduled)" : ""}
-                  </SelectItem>
+                  {isStandardSurface ? (
+                    <>
+                      <SelectItem value="NORMAL">Normal Game</SelectItem>
+                      <SelectItem value="BONUS">Bonus Game</SelectItem>
+                      <SelectItem value="BIG_GOTD">Big GOTD</SelectItem>
+                      <SelectItem value="CHAIN_GAME">Chain Game</SelectItem>
+                    </>
+                  ) : (
+                    <SelectItem value="BIG_GAME" disabled={hasActiveBigGame}>
+                      Big Game
+                      {hasActiveBigGame ? " (already scheduled)" : ""}
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               {hasActiveBigGame ? (

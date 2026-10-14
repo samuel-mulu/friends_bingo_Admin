@@ -131,14 +131,14 @@ function DashboardOverviewContent({ overview }: { overview: OverviewReport }) {
                       "the current live game"}
                   </strong>{" "}
                   to release the slot. After it clears, Big Game auto-starts — or
-                  use <strong>Start Big Game now</strong> on Games.
+                  use <strong>Start Big Game now</strong> on Big Game.
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <Button asChild variant="outline" size="sm">
-              <Link href="/games">Go to Games</Link>
+              <Link href="/big-game">Go to Big Game</Link>
             </Button>
           </CardContent>
         </Card>

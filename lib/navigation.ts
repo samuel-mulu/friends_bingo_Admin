@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Settings,
   Smartphone,
+  Sparkles,
   Trophy,
   Users,
 } from "lucide-react";
@@ -24,6 +25,7 @@ export interface NavigationItem {
 export const adminNavigation: NavigationItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/games", label: "Games", icon: Gamepad2 },
+  { href: "/big-game", label: "Big Game", icon: Sparkles },
   { href: "/bingo-claims", label: "Bingo Claims", icon: BadgeCheck },
   { href: "/players", label: "Players", icon: Users },
   { href: "/champions", label: "House Champions", icon: Trophy },
