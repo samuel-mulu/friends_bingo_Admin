@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Ban,
+  Bot,
   Check,
   Copy,
   Eye,
@@ -18,10 +19,18 @@ import {
 import Link from "next/link";
 
 import {
+  bulkUpdateAdminUserFeatureGrants,
   getAdminUserById,
   getAdminUsers,
+  updateAdminUserFeatureGrants,
   updateAdminUserStatus,
 } from "@/lib/api/admin";
+import type {
+  AdminUserDetail,
+  BulkAdminUserFeatureGrantsResult,
+  UpdateAdminUserFeatureGrantsPayload,
+  UserFeatureSettingsSnapshot,
+} from "@/lib/api/types";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import { adminToast } from "@/lib/admin/admin-toast";
 import { useAdminMutation } from "@/lib/admin/use-admin-mutation";
@@ -76,6 +85,43 @@ import {
 const pageSize = 150;
 type UserRoleFilter = "PLAYER" | "ADMIN";
 type SortKey = "balance" | "createdAt";
+type BulkGrantChoice = "no_change" | "grant" | "revoke";
+type BulkTargetMode = "selected" | "filtered";
+
+function buildBulkPatch(
+  autoMark: BulkGrantChoice,
+  autoBingo: BulkGrantChoice,
+): UpdateAdminUserFeatureGrantsPayload | null {
+  const patch: UpdateAdminUserFeatureGrantsPayload = {};
+  if (autoMark === "grant") {
+    patch.autoMarkGranted = true;
+  } else if (autoMark === "revoke") {
+    patch.autoMarkGranted = false;
+  }
+  if (autoBingo === "grant") {
+    patch.autoBingoGranted = true;
+  } else if (autoBingo === "revoke") {
+    patch.autoBingoGranted = false;
+  }
+  if (
+    patch.autoMarkGranted === undefined &&
+    patch.autoBingoGranted === undefined
+  ) {
+    return null;
+  }
+  return patch;
+}
+
+function createOperationId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const random = (Math.random() * 16) | 0;
+    const value = char === "x" ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
 
 const usersQueryKey = (
   page: number,
@@ -90,7 +136,28 @@ async function copyText(value: string) {
   await navigator.clipboard.writeText(value);
 }
 
+function applyFeatureSettingsToDetail(
+  detail: AdminUserDetail,
+  settings: UserFeatureSettingsSnapshot,
+): AdminUserDetail {
+  return {
+    ...detail,
+    autoMarkGranted: settings.autoMarkGranted,
+    autoBingoGranted: settings.autoBingoGranted,
+    autoMarkEnabled: settings.autoMarkEnabled,
+    autoBingoEnabled: settings.autoBingoEnabled,
+    effectiveAutoMark: settings.effectiveAutoMark,
+    effectiveAutoBingo: settings.effectiveAutoBingo,
+    featureSettingsVersion: settings.featureSettingsVersion,
+  };
+}
+
+function featureFlagLabel(value: boolean | undefined) {
+  return value ? "On" : "Off";
+}
+
 export function PlayersManagement() {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState<UserRoleFilter>("PLAYER");
   const [sortBy, setSortBy] = useState<SortKey>("balance");
@@ -112,10 +179,27 @@ export function PlayersManagement() {
     name: string;
     reason: string | null;
   } | null>(null);
+  const [revokeGrantTarget, setRevokeGrantTarget] = useState<{
+    id: string;
+    name: string;
+    feature: "autoMark" | "autoBingo";
+  } | null>(null);
   const [selectedPhoneIds, setSelectedPhoneIds] = useState<Set<string>>(
     () => new Set(),
   );
   const [copiedPhone, setCopiedPhone] = useState<string | null>(null);
+  const [bulkTargetMode, setBulkTargetMode] =
+    useState<BulkTargetMode>("selected");
+  const [bulkAutoMark, setBulkAutoMark] =
+    useState<BulkGrantChoice>("no_change");
+  const [bulkAutoBingo, setBulkAutoBingo] =
+    useState<BulkGrantChoice>("no_change");
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkPreviewCount, setBulkPreviewCount] = useState<number | null>(null);
+  const [bulkPreviewPending, setBulkPreviewPending] = useState(false);
+  const [bulkResult, setBulkResult] =
+    useState<BulkAdminUserFeatureGrantsResult | null>(null);
+  const [bulkOperationId, setBulkOperationId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -174,6 +258,72 @@ export function PlayersManagement() {
     invalidateQueryKeys: [["admin", "users"]],
     onSuccess: () => {
       setUnbanTarget(null);
+    },
+  });
+
+  const featureGrantMutation = useAdminMutation({
+    mutationFn: ({
+      userId,
+      payload,
+    }: {
+      userId: string;
+      payload: UpdateAdminUserFeatureGrantsPayload;
+    }) => updateAdminUserFeatureGrants(userId, payload),
+    successMessage: "Player automation updated",
+    onSuccess: (settings, variables) => {
+      queryClient.setQueryData<AdminUserDetail>(
+        userDetailQueryKey(variables.userId),
+        (current) =>
+          current ? applyFeatureSettingsToDetail(current, settings) : current,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: userDetailQueryKey(variables.userId),
+      });
+      setRevokeGrantTarget(null);
+    },
+  });
+
+  const bulkFeatureGrantMutation = useAdminMutation({
+    mutationFn: ({
+      operationId,
+      patch,
+    }: {
+      operationId: string;
+      patch: UpdateAdminUserFeatureGrantsPayload;
+    }) => {
+      if (bulkTargetMode === "selected") {
+        return bulkUpdateAdminUserFeatureGrants({
+          userIds: [...selectedPhoneIds],
+          patch,
+          operationId,
+          dryRun: false,
+        });
+      }
+      return bulkUpdateAdminUserFeatureGrants({
+        filter: {
+          role: roleFilter,
+          search: debouncedSearch || undefined,
+        },
+        patch,
+        operationId,
+        dryRun: false,
+      });
+    },
+    successMessage: "Bulk automation update finished",
+    invalidateQueryKeys: [["admin", "users"]],
+    onSuccess: (result) => {
+      setBulkResult(result);
+      setBulkConfirmOpen(false);
+      setBulkPreviewCount(null);
+      setBulkOperationId(null);
+      if (bulkTargetMode === "selected" && result.failed === 0) {
+        setSelectedPhoneIds(new Set());
+      }
+      if (selectedUserId) {
+        void queryClient.invalidateQueries({
+          queryKey: userDetailQueryKey(selectedUserId),
+        });
+      }
     },
   });
 
@@ -275,6 +425,48 @@ export function PlayersManagement() {
     }
   };
 
+  const openBulkConfirm = async () => {
+    const patch = buildBulkPatch(bulkAutoMark, bulkAutoBingo);
+    if (!patch) {
+      adminToast.error("Choose Grant or Revoke for at least one feature.");
+      return;
+    }
+
+    if (bulkTargetMode === "selected" && selectedCount === 0) {
+      adminToast.error("Select at least one player, or use all filtered.");
+      return;
+    }
+
+    setBulkPreviewPending(true);
+    setBulkResult(null);
+    try {
+      const preview =
+        bulkTargetMode === "selected"
+          ? await bulkUpdateAdminUserFeatureGrants({
+              userIds: [...selectedPhoneIds],
+              patch,
+              dryRun: true,
+            })
+          : await bulkUpdateAdminUserFeatureGrants({
+              filter: {
+                role: roleFilter,
+                search: debouncedSearch || undefined,
+              },
+              patch,
+              dryRun: true,
+            });
+      setBulkPreviewCount(preview.matched);
+      setBulkOperationId(createOperationId());
+      setBulkConfirmOpen(true);
+    } catch (error) {
+      adminToast.error(
+        getApiErrorMessage(error, "Could not preview bulk targets."),
+      );
+    } finally {
+      setBulkPreviewPending(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -350,6 +542,110 @@ export function PlayersManagement() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="mt-4 space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Bulk Player Automation</p>
+                <p className="text-xs text-muted-foreground">
+                  Grant or revoke Auto Mark / Auto Bingo for selected players or
+                  the full filtered set. Server resolves the final count.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  bulkPreviewPending || bulkFeatureGrantMutation.isPending
+                }
+                onClick={() => void openBulkConfirm()}
+              >
+                {bulkPreviewPending ? "Previewing…" : "Review bulk update"}
+              </Button>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Target
+                </p>
+                <Select
+                  value={bulkTargetMode}
+                  onValueChange={(value) =>
+                    setBulkTargetMode(value as BulkTargetMode)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="selected">
+                      Selected players ({selectedCount})
+                    </SelectItem>
+                    <SelectItem value="filtered">
+                      All filtered (
+                      {usersQuery.data?.pagination.totalItems.toLocaleString() ??
+                        "0"}
+                      )
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Auto Mark
+                </p>
+                <Select
+                  value={bulkAutoMark}
+                  onValueChange={(value) =>
+                    setBulkAutoMark(value as BulkGrantChoice)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="no_change">No change</SelectItem>
+                    <SelectItem value="grant">Grant</SelectItem>
+                    <SelectItem value="revoke">Revoke</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Auto Bingo
+                </p>
+                <Select
+                  value={bulkAutoBingo}
+                  onValueChange={(value) =>
+                    setBulkAutoBingo(value as BulkGrantChoice)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="no_change">No change</SelectItem>
+                    <SelectItem value="grant">Grant</SelectItem>
+                    <SelectItem value="revoke">Revoke</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {bulkResult ? (
+              <div className="rounded-lg border border-border/60 bg-background px-3 py-2 text-xs">
+                <p className="font-medium">
+                  Last bulk result
+                  {bulkResult.idempotentReplay ? " (idempotent replay)" : ""}
+                </p>
+                <p className="text-muted-foreground">
+                  Matched {bulkResult.matched.toLocaleString()} · Changed{" "}
+                  {bulkResult.changed.toLocaleString()} · Unchanged{" "}
+                  {bulkResult.unchanged.toLocaleString()} · Failed{" "}
+                  {bulkResult.failed.toLocaleString()}
+                </p>
+              </div>
+            ) : null}
           </div>
         </CardHeader>
 
@@ -499,6 +795,7 @@ export function PlayersManagement() {
             setSelectedUserId(null);
             setGameHistoryOpen(false);
             setTransactionHistoryOpen(false);
+            setRevokeGrantTarget(null);
           }
         }}
       >
@@ -633,6 +930,138 @@ export function PlayersManagement() {
                   </CardContent>
                 </Card>
 
+                {userDetailQuery.data.role === "PLAYER" ? (
+                  <Card size="sm">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Bot className="size-4" />
+                        Player Automation
+                      </CardTitle>
+                      <CardDescription>
+                        Admin grants access. The player still chooses whether to
+                        turn each feature on.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-3 rounded-lg border border-border/70 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">Auto Mark access</p>
+                            <p className="text-xs text-muted-foreground">
+                              Admin permission only
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              userDetailQuery.data.autoMarkGranted
+                                ? "default"
+                                : "outline"
+                            }
+                            disabled={
+                              featureGrantMutation.isPending ||
+                              banMutation.isPending ||
+                              unbanMutation.isPending
+                            }
+                            onClick={() => {
+                              if (userDetailQuery.data.autoMarkGranted) {
+                                setRevokeGrantTarget({
+                                  id: userDetailQuery.data.id,
+                                  name: userDetailQuery.data.fullName,
+                                  feature: "autoMark",
+                                });
+                                return;
+                              }
+                              featureGrantMutation.mutate({
+                                userId: userDetailQuery.data.id,
+                                payload: { autoMarkGranted: true },
+                              });
+                            }}
+                          >
+                            {userDetailQuery.data.autoMarkGranted
+                              ? "Granted"
+                              : "Grant access"}
+                          </Button>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <DetailItem
+                            label="Player enabled"
+                            value={featureFlagLabel(
+                              userDetailQuery.data.autoMarkEnabled,
+                            )}
+                          />
+                          <DetailItem
+                            label="Effective"
+                            value={featureFlagLabel(
+                              userDetailQuery.data.effectiveAutoMark,
+                            )}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 rounded-lg border border-border/70 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">
+                              Auto Bingo access
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Admin permission only
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={
+                              userDetailQuery.data.autoBingoGranted
+                                ? "default"
+                                : "outline"
+                            }
+                            disabled={
+                              featureGrantMutation.isPending ||
+                              banMutation.isPending ||
+                              unbanMutation.isPending
+                            }
+                            onClick={() => {
+                              if (userDetailQuery.data.autoBingoGranted) {
+                                setRevokeGrantTarget({
+                                  id: userDetailQuery.data.id,
+                                  name: userDetailQuery.data.fullName,
+                                  feature: "autoBingo",
+                                });
+                                return;
+                              }
+                              featureGrantMutation.mutate({
+                                userId: userDetailQuery.data.id,
+                                payload: { autoBingoGranted: true },
+                              });
+                            }}
+                          >
+                            {userDetailQuery.data.autoBingoGranted
+                              ? "Granted"
+                              : "Grant access"}
+                          </Button>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <DetailItem
+                            label="Player enabled"
+                            value={featureFlagLabel(
+                              userDetailQuery.data.autoBingoEnabled,
+                            )}
+                          />
+                          <DetailItem
+                            label="Effective"
+                            value={featureFlagLabel(
+                              userDetailQuery.data.effectiveAutoBingo,
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -762,6 +1191,93 @@ export function PlayersManagement() {
           unbanMutation.mutate({ userId: unbanTarget.id });
         }}
         isPending={unbanMutation.isPending}
+      />
+
+      <ConfirmActionDialog
+        open={Boolean(revokeGrantTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRevokeGrantTarget(null);
+          }
+        }}
+        title={
+          revokeGrantTarget?.feature === "autoBingo"
+            ? "Revoke Auto Bingo access"
+            : "Revoke Auto Mark access"
+        }
+        description={
+          revokeGrantTarget
+            ? `Remove ${
+                revokeGrantTarget.feature === "autoBingo"
+                  ? "Auto Bingo"
+                  : "Auto Mark"
+              } access for ${revokeGrantTarget.name}. Their preference will be turned off and the feature will disappear from the app until granted again.`
+            : "Revoke this feature grant."
+        }
+        confirmLabel="Revoke access"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          if (!revokeGrantTarget || featureGrantMutation.isPending) {
+            return;
+          }
+
+          featureGrantMutation.mutate({
+            userId: revokeGrantTarget.id,
+            payload:
+              revokeGrantTarget.feature === "autoBingo"
+                ? { autoBingoGranted: false }
+                : { autoMarkGranted: false },
+          });
+        }}
+        isPending={featureGrantMutation.isPending}
+      />
+
+      <ConfirmActionDialog
+        open={bulkConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBulkConfirmOpen(false);
+            setBulkPreviewCount(null);
+            setBulkOperationId(null);
+          }
+        }}
+        title="Confirm bulk automation update"
+        description={
+          bulkPreviewCount == null
+            ? "Previewing target players…"
+            : `Apply this update to ${bulkPreviewCount.toLocaleString()} player${
+                bulkPreviewCount === 1 ? "" : "s"
+              } (${
+                bulkTargetMode === "selected"
+                  ? "selected IDs"
+                  : "all filtered accounts"
+              }). Auto Mark: ${bulkAutoMark.replace("_", " ")}; Auto Bingo: ${bulkAutoBingo.replace(
+                "_",
+                " ",
+              )}. Revokes clear player preferences. Grants leave preferences OFF.`
+        }
+        confirmLabel={
+          bulkFeatureGrantMutation.isPending
+            ? "Updating…"
+            : "Apply bulk update"
+        }
+        confirmVariant="destructive"
+        onConfirm={() => {
+          const patch = buildBulkPatch(bulkAutoMark, bulkAutoBingo);
+          if (
+            !patch ||
+            !bulkOperationId ||
+            bulkFeatureGrantMutation.isPending ||
+            bulkPreviewCount == null
+          ) {
+            return;
+          }
+          bulkFeatureGrantMutation.mutate({
+            operationId: bulkOperationId,
+            patch,
+          });
+        }}
+        isPending={bulkFeatureGrantMutation.isPending || bulkPreviewPending}
       />
 
       <PlayerSendFeedbackDialog

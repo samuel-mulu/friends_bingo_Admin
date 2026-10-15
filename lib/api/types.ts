@@ -132,6 +132,17 @@ export interface WalletSummary {
   updatedAt: string;
 }
 
+export interface UserFeatureSettingsSnapshot {
+  autoMarkGranted: boolean;
+  autoBingoGranted: boolean;
+  autoMarkEnabled: boolean;
+  autoBingoEnabled: boolean;
+  effectiveAutoMark: boolean;
+  effectiveAutoBingo: boolean;
+  featureSettingsVersion: number;
+  updatedAt: string;
+}
+
 export interface AdminUserDetail {
   id: string;
   fullName: string;
@@ -141,6 +152,13 @@ export interface AdminUserDetail {
   blockReason: string | null;
   blockedAt: string | null;
   blockedById: string | null;
+  autoMarkGranted?: boolean;
+  autoBingoGranted?: boolean;
+  autoMarkEnabled?: boolean;
+  autoBingoEnabled?: boolean;
+  effectiveAutoMark?: boolean;
+  effectiveAutoBingo?: boolean;
+  featureSettingsVersion?: number;
   createdAt: string;
   updatedAt: string;
   wallet: WalletSummary | null;
@@ -152,6 +170,37 @@ export interface AdminUserDetail {
     transactions: number;
   };
 }
+
+export type UpdateAdminUserFeatureGrantsPayload = {
+  autoMarkGranted?: boolean;
+  autoBingoGranted?: boolean;
+};
+
+export type BulkAdminUserFeatureGrantsFilter = {
+  search?: string;
+  role?: "ADMIN" | "PLAYER";
+  status?: "ACTIVE" | "BLOCKED";
+};
+
+export type BulkAdminUserFeatureGrantsPayload = {
+  userIds?: string[];
+  filter?: BulkAdminUserFeatureGrantsFilter;
+  patch: UpdateAdminUserFeatureGrantsPayload;
+  operationId?: string;
+  dryRun?: boolean;
+};
+
+export type BulkAdminUserFeatureGrantsResult = {
+  operationId: string;
+  dryRun: boolean;
+  targetingMode: "ids" | "filter";
+  matched: number;
+  changed: number;
+  unchanged: number;
+  failed: number;
+  failures: Array<{ userId: string; reason: string }>;
+  idempotentReplay?: boolean;
+};
 
 export interface AdminPlayerGameCartela {
   id: string;

@@ -14,6 +14,10 @@ import type {
   AdminUserDetail,
   AdminUserFinancialHistory,
   AdminUserListItem,
+  BulkAdminUserFeatureGrantsPayload,
+  BulkAdminUserFeatureGrantsResult,
+  UpdateAdminUserFeatureGrantsPayload,
+  UserFeatureSettingsSnapshot,
   AdminWalletTransaction,
   AdminWalletTransactionCategory,
   AdminWalletTransactionReferenceStatus,
@@ -468,6 +472,27 @@ export function updateAdminUserStatus(
   return apiRequest<AdminUserDetail>({
     url: `/admin/users/${userId}/status`,
     method: "PATCH",
+    data: payload,
+  });
+}
+
+export function updateAdminUserFeatureGrants(
+  userId: string,
+  payload: UpdateAdminUserFeatureGrantsPayload,
+) {
+  return apiRequest<UserFeatureSettingsSnapshot>({
+    url: `/admin/users/${userId}/feature-grants`,
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function bulkUpdateAdminUserFeatureGrants(
+  payload: BulkAdminUserFeatureGrantsPayload,
+) {
+  return apiRequest<BulkAdminUserFeatureGrantsResult>({
+    url: `/admin/users/feature-grants/bulk`,
+    method: "POST",
     data: payload,
   });
 }
