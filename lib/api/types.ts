@@ -86,6 +86,13 @@ export interface AdminUserListItem {
   status: "ACTIVE" | "BLOCKED";
   blockReason: string | null;
   blockedAt: string | null;
+  autoMarkGranted?: boolean;
+  autoBingoGranted?: boolean;
+  autoMarkEnabled?: boolean;
+  autoBingoEnabled?: boolean;
+  effectiveAutoMark?: boolean;
+  effectiveAutoBingo?: boolean;
+  featureSettingsVersion?: number;
   walletBalance: string;
   createdAt: string;
 }
@@ -180,6 +187,8 @@ export type BulkAdminUserFeatureGrantsFilter = {
   search?: string;
   role?: "ADMIN" | "PLAYER";
   status?: "ACTIVE" | "BLOCKED";
+  autoMarkGranted?: boolean;
+  autoBingoGranted?: boolean;
 };
 
 export type BulkAdminUserFeatureGrantsPayload = {

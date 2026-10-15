@@ -6,6 +6,8 @@ import {
   Ban,
   Bot,
   Check,
+  CheckCircle2,
+  Circle,
   Copy,
   Eye,
   History,
@@ -15,7 +17,9 @@ import {
   ShieldCheck,
   Smartphone,
   Wallet,
+  XCircle,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 
 import {
@@ -87,6 +91,43 @@ type UserRoleFilter = "PLAYER" | "ADMIN";
 type SortKey = "balance" | "createdAt";
 type BulkGrantChoice = "no_change" | "grant" | "revoke";
 type BulkTargetMode = "selected" | "filtered";
+/** all = no filter; granted = true; revoked = false (not granted). */
+type FeatureGrantFilter = "all" | "granted" | "revoked";
+
+function grantFilterToBoolean(
+  filter: FeatureGrantFilter,
+): boolean | undefined {
+  if (filter === "granted") return true;
+  if (filter === "revoked") return false;
+  return undefined;
+}
+
+function GrantStatusIcon({
+  granted,
+  label,
+}: {
+  granted: boolean;
+  label: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+        granted
+          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+          : "bg-muted text-muted-foreground",
+      )}
+      title={granted ? `${label}: Granted` : `${label}: Not granted`}
+    >
+      {granted ? (
+        <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
+      ) : (
+        <Circle className="size-3.5 shrink-0" aria-hidden />
+      )}
+      <span>{granted ? "Granted" : "Off"}</span>
+    </span>
+  );
+}
 
 function buildBulkPatch(
   autoMark: BulkGrantChoice,
@@ -128,7 +169,19 @@ const usersQueryKey = (
   role: UserRoleFilter,
   search: string,
   sortBy: SortKey,
-) => ["admin", "users", page, role, search, sortBy] as const;
+  autoMarkFilter: FeatureGrantFilter,
+  autoBingoFilter: FeatureGrantFilter,
+) =>
+  [
+    "admin",
+    "users",
+    page,
+    role,
+    search,
+    sortBy,
+    autoMarkFilter,
+    autoBingoFilter,
+  ] as const;
 const userDetailQueryKey = (userId: string) =>
   ["admin", "users", userId] as const;
 
@@ -161,6 +214,10 @@ export function PlayersManagement() {
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState<UserRoleFilter>("PLAYER");
   const [sortBy, setSortBy] = useState<SortKey>("balance");
+  const [autoMarkFilter, setAutoMarkFilter] =
+    useState<FeatureGrantFilter>("all");
+  const [autoBingoFilter, setAutoBingoFilter] =
+    useState<FeatureGrantFilter>("all");
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -211,16 +268,25 @@ export function PlayersManagement() {
 
   useEffect(() => {
     setSelectedPhoneIds(new Set());
-  }, [page, roleFilter, debouncedSearch, sortBy]);
+  }, [page, roleFilter, debouncedSearch, sortBy, autoMarkFilter, autoBingoFilter]);
 
   const usersQuery = useQuery({
-    queryKey: usersQueryKey(page, roleFilter, debouncedSearch, sortBy),
+    queryKey: usersQueryKey(
+      page,
+      roleFilter,
+      debouncedSearch,
+      sortBy,
+      autoMarkFilter,
+      autoBingoFilter,
+    ),
     queryFn: () =>
       getAdminUsers(page, pageSize, {
         role: roleFilter,
         search: debouncedSearch || undefined,
         sortBy,
         sortOrder: "desc",
+        autoMarkGranted: grantFilterToBoolean(autoMarkFilter),
+        autoBingoGranted: grantFilterToBoolean(autoBingoFilter),
       }),
   });
 
@@ -270,6 +336,7 @@ export function PlayersManagement() {
       payload: UpdateAdminUserFeatureGrantsPayload;
     }) => updateAdminUserFeatureGrants(userId, payload),
     successMessage: "Player automation updated",
+    invalidateQueryKeys: [["admin", "users"]],
     onSuccess: (settings, variables) => {
       queryClient.setQueryData<AdminUserDetail>(
         userDetailQueryKey(variables.userId),
@@ -303,6 +370,8 @@ export function PlayersManagement() {
         filter: {
           role: roleFilter,
           search: debouncedSearch || undefined,
+          autoMarkGranted: grantFilterToBoolean(autoMarkFilter),
+          autoBingoGranted: grantFilterToBoolean(autoBingoFilter),
         },
         patch,
         operationId,
@@ -451,6 +520,8 @@ export function PlayersManagement() {
               filter: {
                 role: roleFilter,
                 search: debouncedSearch || undefined,
+                autoMarkGranted: grantFilterToBoolean(autoMarkFilter),
+                autoBingoGranted: grantFilterToBoolean(autoBingoFilter),
               },
               patch,
               dryRun: true,
@@ -475,7 +546,8 @@ export function PlayersManagement() {
             <div className="space-y-1">
               <CardTitle>Player directory</CardTitle>
               <CardDescription>
-                Search by name or phone. Default sort is highest balance first.
+                Search by name or phone. Green check = feature granted. Use
+                filters to show only granted or off players.
               </CardDescription>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -518,6 +590,38 @@ export function PlayersManagement() {
                   <SelectItem value="ADMIN">Admins</SelectItem>
                 </SelectContent>
               </Select>
+              <Select
+                value={autoMarkFilter}
+                onValueChange={(value) => {
+                  setAutoMarkFilter(value as FeatureGrantFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder="Auto Mark" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Auto Mark: All</SelectItem>
+                  <SelectItem value="granted">Auto Mark: Granted</SelectItem>
+                  <SelectItem value="revoked">Auto Mark: Off</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={autoBingoFilter}
+                onValueChange={(value) => {
+                  setAutoBingoFilter(value as FeatureGrantFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Auto Bingo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Auto Bingo: All</SelectItem>
+                  <SelectItem value="granted">Auto Bingo: Granted</SelectItem>
+                  <SelectItem value="revoked">Auto Bingo: Off</SelectItem>
+                </SelectContent>
+              </Select>
               <Button type="button" variant="outline" asChild>
                 <Link href="/devices">
                   <Smartphone className="size-4" />
@@ -547,10 +651,11 @@ export function PlayersManagement() {
           <div className="mt-4 space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-sm font-semibold">Bulk Player Automation</p>
+                <p className="text-sm font-semibold">Bulk grant / revoke</p>
                 <p className="text-xs text-muted-foreground">
-                  Grant or revoke Auto Mark / Auto Bingo for selected players or
-                  the full filtered set. Server resolves the final count.
+                  Choose who to update, then Grant or Revoke each feature.
+                  &quot;Leave as-is&quot; skips that feature. Table filters above
+                  also apply when using &quot;All matching filters&quot;.
                 </p>
               </div>
               <Button
@@ -561,13 +666,13 @@ export function PlayersManagement() {
                 }
                 onClick={() => void openBulkConfirm()}
               >
-                {bulkPreviewPending ? "Previewing…" : "Review bulk update"}
+                {bulkPreviewPending ? "Checking…" : "Review & apply"}
               </Button>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Target
+                  Who to update
                 </p>
                 <Select
                   value={bulkTargetMode}
@@ -580,10 +685,10 @@ export function PlayersManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="selected">
-                      Selected players ({selectedCount})
+                      Checked rows ({selectedCount})
                     </SelectItem>
                     <SelectItem value="filtered">
-                      All filtered (
+                      All matching filters (
                       {usersQuery.data?.pagination.totalItems.toLocaleString() ??
                         "0"}
                       )
@@ -593,7 +698,7 @@ export function PlayersManagement() {
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Auto Mark
+                  Auto Mark action
                 </p>
                 <Select
                   value={bulkAutoMark}
@@ -605,15 +710,15 @@ export function PlayersManagement() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="no_change">No change</SelectItem>
-                    <SelectItem value="grant">Grant</SelectItem>
-                    <SelectItem value="revoke">Revoke</SelectItem>
+                    <SelectItem value="no_change">Leave as-is</SelectItem>
+                    <SelectItem value="grant">Grant access</SelectItem>
+                    <SelectItem value="revoke">Revoke access</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Auto Bingo
+                  Auto Bingo action
                 </p>
                 <Select
                   value={bulkAutoBingo}
@@ -625,9 +730,9 @@ export function PlayersManagement() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="no_change">No change</SelectItem>
-                    <SelectItem value="grant">Grant</SelectItem>
-                    <SelectItem value="revoke">Revoke</SelectItem>
+                    <SelectItem value="no_change">Leave as-is</SelectItem>
+                    <SelectItem value="grant">Grant access</SelectItem>
+                    <SelectItem value="revoke">Revoke access</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -651,7 +756,7 @@ export function PlayersManagement() {
 
         <CardContent className="px-0 pt-0">
           {usersQuery.isLoading ? (
-            <AdminTableSkeleton columns={9} />
+            <AdminTableSkeleton columns={11} />
           ) : usersQuery.isError ? (
             <AdminErrorState
               title="Could not load players"
@@ -667,8 +772,10 @@ export function PlayersManagement() {
                 roleFilter === "ADMIN" ? "No admins found" : "No players found"
               }
               description={
-                debouncedSearch
-                  ? "No accounts match this search."
+                debouncedSearch ||
+                autoMarkFilter !== "all" ||
+                autoBingoFilter !== "all"
+                  ? "No accounts match this search or grant filter."
                   : roleFilter === "ADMIN"
                     ? "Admin accounts will appear here once they are created."
                     : "Player accounts will appear here once people start registering."
@@ -695,88 +802,189 @@ export function PlayersManagement() {
                     <TableHead>Phone number</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Auto Mark</TableHead>
+                    <TableHead>Auto Bingo</TableHead>
                     <TableHead className="text-right">Wallet balance</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Details</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {usersQuery.data.items.map((user, index) => (
-                    <TableRow key={user.id}>
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${user.phoneNumber}`}
-                          className="size-4 accent-primary"
-                          checked={selectedPhoneIds.has(user.id)}
-                          onChange={(event) =>
-                            togglePhoneSelection(user.id, event.target.checked)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="tabular-nums text-muted-foreground">
-                        {(page - 1) * pageSize + index + 1}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {user.fullName}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <span>{user.phoneNumber}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Copy ${user.phoneNumber}`}
-                            onClick={() =>
-                              void handleCopyPhone(user.phoneNumber)
+                  {usersQuery.data.items.map((user, index) => {
+                    const markGranted = user.autoMarkGranted === true;
+                    const bingoGranted = user.autoBingoGranted === true;
+                    const grantsBusy =
+                      featureGrantMutation.isPending ||
+                      banMutation.isPending ||
+                      unbanMutation.isPending;
+                    return (
+                      <TableRow key={user.id}>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${user.phoneNumber}`}
+                            className="size-4 accent-primary"
+                            checked={selectedPhoneIds.has(user.id)}
+                            onChange={(event) =>
+                              togglePhoneSelection(
+                                user.id,
+                                event.target.checked,
+                              )
                             }
-                          >
-                            {copiedPhone === user.phoneNumber ? (
-                              <Check className="size-3.5 text-emerald-600" />
-                            ) : (
-                              <Copy className="size-3.5" />
-                            )}
-                          </Button>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{user.role}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <AdminStatusBadge status={user.status} />
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(user.walletBalance)}
-                      </TableCell>
-                      <TableCell>{formatDateTime(user.createdAt)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setFeedbackTarget({
-                                id: user.id,
-                                name: user.fullName,
-                              })
-                            }
-                          >
-                            <MessageSquare className="size-4" />
-                            Send
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSelectedUserId(user.id)}
-                          >
-                            <Eye className="size-4" />
-                            View
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          />
+                        </TableCell>
+                        <TableCell className="tabular-nums text-muted-foreground">
+                          {(page - 1) * pageSize + index + 1}
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {user.fullName}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            <span>{user.phoneNumber}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Copy ${user.phoneNumber}`}
+                              onClick={() =>
+                                void handleCopyPhone(user.phoneNumber)
+                              }
+                            >
+                              {copiedPhone === user.phoneNumber ? (
+                                <Check className="size-3.5 text-emerald-600" />
+                              ) : (
+                                <Copy className="size-3.5" />
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{user.role}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <AdminStatusBadge status={user.status} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1.5">
+                            <GrantStatusIcon
+                              granted={markGranted}
+                              label="Auto Mark"
+                            />
+                            {user.role === "PLAYER" ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={markGranted ? "outline" : "default"}
+                                className="h-7 px-2 text-xs"
+                                disabled={grantsBusy}
+                                onClick={() => {
+                                  if (markGranted) {
+                                    setRevokeGrantTarget({
+                                      id: user.id,
+                                      name: user.fullName,
+                                      feature: "autoMark",
+                                    });
+                                    return;
+                                  }
+                                  featureGrantMutation.mutate({
+                                    userId: user.id,
+                                    payload: { autoMarkGranted: true },
+                                  });
+                                }}
+                              >
+                                {markGranted ? (
+                                  <>
+                                    <XCircle className="size-3.5" />
+                                    Revoke
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="size-3.5" />
+                                    Grant
+                                  </>
+                                )}
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1.5">
+                            <GrantStatusIcon
+                              granted={bingoGranted}
+                              label="Auto Bingo"
+                            />
+                            {user.role === "PLAYER" ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={bingoGranted ? "outline" : "default"}
+                                className="h-7 px-2 text-xs"
+                                disabled={grantsBusy}
+                                onClick={() => {
+                                  if (bingoGranted) {
+                                    setRevokeGrantTarget({
+                                      id: user.id,
+                                      name: user.fullName,
+                                      feature: "autoBingo",
+                                    });
+                                    return;
+                                  }
+                                  featureGrantMutation.mutate({
+                                    userId: user.id,
+                                    payload: { autoBingoGranted: true },
+                                  });
+                                }}
+                              >
+                                {bingoGranted ? (
+                                  <>
+                                    <XCircle className="size-3.5" />
+                                    Revoke
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="size-3.5" />
+                                    Grant
+                                  </>
+                                )}
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatCurrency(user.walletBalance)}
+                        </TableCell>
+                        <TableCell>
+                          {formatDateTime(user.createdAt)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setFeedbackTarget({
+                                  id: user.id,
+                                  name: user.fullName,
+                                })
+                              }
+                            >
+                              <MessageSquare className="size-4" />
+                              Send
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSelectedUserId(user.id)}
+                            >
+                              <Eye className="size-4" />
+                              View
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
               <AdminPagination
@@ -956,8 +1164,8 @@ export function PlayersManagement() {
                             size="sm"
                             variant={
                               userDetailQuery.data.autoMarkGranted
-                                ? "default"
-                                : "outline"
+                                ? "outline"
+                                : "default"
                             }
                             disabled={
                               featureGrantMutation.isPending ||
@@ -979,20 +1187,34 @@ export function PlayersManagement() {
                               });
                             }}
                           >
-                            {userDetailQuery.data.autoMarkGranted
-                              ? "Granted"
-                              : "Grant access"}
+                            {userDetailQuery.data.autoMarkGranted ? (
+                              <>
+                                <XCircle className="size-3.5" />
+                                Revoke access
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="size-3.5" />
+                                Grant access
+                              </>
+                            )}
                           </Button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <GrantStatusIcon
+                            granted={Boolean(userDetailQuery.data.autoMarkGranted)}
+                            label="Auto Mark"
+                          />
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <DetailItem
-                            label="Player enabled"
+                            label="Player turned on"
                             value={featureFlagLabel(
                               userDetailQuery.data.autoMarkEnabled,
                             )}
                           />
                           <DetailItem
-                            label="Effective"
+                            label="Working now"
                             value={featureFlagLabel(
                               userDetailQuery.data.effectiveAutoMark,
                             )}
@@ -1015,8 +1237,8 @@ export function PlayersManagement() {
                             size="sm"
                             variant={
                               userDetailQuery.data.autoBingoGranted
-                                ? "default"
-                                : "outline"
+                                ? "outline"
+                                : "default"
                             }
                             disabled={
                               featureGrantMutation.isPending ||
@@ -1038,20 +1260,36 @@ export function PlayersManagement() {
                               });
                             }}
                           >
-                            {userDetailQuery.data.autoBingoGranted
-                              ? "Granted"
-                              : "Grant access"}
+                            {userDetailQuery.data.autoBingoGranted ? (
+                              <>
+                                <XCircle className="size-3.5" />
+                                Revoke access
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="size-3.5" />
+                                Grant access
+                              </>
+                            )}
                           </Button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <GrantStatusIcon
+                            granted={Boolean(
+                              userDetailQuery.data.autoBingoGranted,
+                            )}
+                            label="Auto Bingo"
+                          />
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <DetailItem
-                            label="Player enabled"
+                            label="Player turned on"
                             value={featureFlagLabel(
                               userDetailQuery.data.autoBingoEnabled,
                             )}
                           />
                           <DetailItem
-                            label="Effective"
+                            label="Working now"
                             value={featureFlagLabel(
                               userDetailQuery.data.effectiveAutoBingo,
                             )}

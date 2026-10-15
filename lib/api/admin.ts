@@ -422,6 +422,8 @@ export function getAdminUsers(
     search?: string;
     sortBy?: "balance" | "createdAt";
     sortOrder?: "asc" | "desc";
+    autoMarkGranted?: boolean;
+    autoBingoGranted?: boolean;
   },
 ) {
   return apiPaginatedRequest<AdminUserListItem>({
@@ -434,6 +436,8 @@ export function getAdminUsers(
       search: options?.search?.trim() || undefined,
       sortBy: options?.sortBy ?? "balance",
       sortOrder: options?.sortOrder ?? "desc",
+      autoMarkGranted: options?.autoMarkGranted,
+      autoBingoGranted: options?.autoBingoGranted,
     },
   });
 }
