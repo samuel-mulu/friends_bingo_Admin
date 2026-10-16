@@ -178,6 +178,28 @@ export interface AdminUserDetail {
   };
 }
 
+export interface AdminUserAuthSession {
+  id: string;
+  deviceId: string | null;
+  platform: string | null;
+  deviceLabel: string | null;
+  userAgent: string | null;
+  lastUsedAt: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface AdminUserAuthDetails {
+  userId: string;
+  fullName: string;
+  phoneNumber: string;
+  isLoggedIn: boolean;
+  lastLoginAt: string | null;
+  lastSeenAt: string | null;
+  activeSessionCount: number;
+  sessions: AdminUserAuthSession[];
+}
+
 export type UpdateAdminUserFeatureGrantsPayload = {
   autoMarkGranted?: boolean;
   autoBingoGranted?: boolean;

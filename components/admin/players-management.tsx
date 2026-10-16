@@ -11,6 +11,7 @@ import {
   Copy,
   Eye,
   History,
+  KeyRound,
   MessageSquare,
   ReceiptText,
   Search,
@@ -51,6 +52,7 @@ import {
   AdminErrorState,
 } from "@/components/admin/admin-table-state";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { PlayerAuthDetailsDialog } from "@/components/admin/player-auth-details-dialog";
 import { PlayerGameHistoryDialog } from "@/components/admin/player-game-history-dialog";
 import { PlayerSendFeedbackDialog } from "@/components/admin/player-send-feedback-dialog";
 import { PlayerTransactionHistoryDialog } from "@/components/admin/player-transaction-history-dialog";
@@ -223,6 +225,7 @@ export function PlayersManagement() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [gameHistoryOpen, setGameHistoryOpen] = useState(false);
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
+  const [authDetailsOpen, setAuthDetailsOpen] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<{
     id: string;
     name: string;
@@ -1003,6 +1006,7 @@ export function PlayersManagement() {
             setSelectedUserId(null);
             setGameHistoryOpen(false);
             setTransactionHistoryOpen(false);
+            setAuthDetailsOpen(false);
             setRevokeGrantTarget(null);
           }
         }}
@@ -1317,6 +1321,14 @@ export function PlayersManagement() {
                   <Button
                     type="button"
                     variant="outline"
+                    onClick={() => setAuthDetailsOpen(true)}
+                  >
+                    <KeyRound className="size-4" />
+                    Authentication
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
                     onClick={() => setGameHistoryOpen(true)}
                   >
                     <History className="size-4" />
@@ -1527,6 +1539,12 @@ export function PlayersManagement() {
             setFeedbackTarget(null);
           }
         }}
+      />
+      <PlayerAuthDetailsDialog
+        userId={selectedUserId}
+        playerName={userDetailQuery.data?.fullName}
+        open={authDetailsOpen && Boolean(selectedUserId)}
+        onOpenChange={setAuthDetailsOpen}
       />
       <PlayerGameHistoryDialog
         userId={selectedUserId}

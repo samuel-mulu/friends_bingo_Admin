@@ -11,6 +11,7 @@ import type {
   AdminDeviceListItem,
   AdminDevicesSummary,
   AdminSession,
+  AdminUserAuthDetails,
   AdminUserDetail,
   AdminUserFinancialHistory,
   AdminUserListItem,
@@ -465,6 +466,13 @@ export function getAdminDevices(
 export function getAdminUserById(userId: string) {
   return apiRequest<AdminUserDetail>({
     url: `/admin/users/${userId}`,
+    method: "GET",
+  });
+}
+
+export function getAdminUserAuthDetails(userId: string) {
+  return apiRequest<AdminUserAuthDetails>({
+    url: `/admin/users/${userId}/auth-details`,
     method: "GET",
   });
 }
