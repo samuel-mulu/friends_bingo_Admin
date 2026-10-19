@@ -3,24 +3,37 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SOCKET_URL: "https://api.friendschewata.com"
+
     container_name: friendsbingo-admin
     restart: unless-stopped
+
     environment:
       NODE_ENV: production
-      API_BASE_URL: http://host.docker.internal:4000
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      API_BASE_URL: http://api:4000
+
     ports:
       - "127.0.0.1:3001:3000"
+
+    networks:
+      - default
+      - friendsbingo_backend
+
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
         ]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
+
+networks:
+  friendsbingo_backend:
+    external: true
+    name: friendsbingo_default

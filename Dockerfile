@@ -9,6 +9,10 @@ RUN npm ci
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+ARG NEXT_PUBLIC_SOCKET_URL
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+
 # No .env in build context (.dockerignore). Strip any env files Next may emit into standalone.
 RUN npm run build \
   && rm -f .next/standalone/.env .next/standalone/.env.* \

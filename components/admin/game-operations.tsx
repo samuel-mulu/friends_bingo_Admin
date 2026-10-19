@@ -373,6 +373,8 @@ export function GameOperations() {
   const [normalCommissionDraft, setNormalCommissionDraft] = useState(
     FALLBACK_NORMAL_COMMISSION,
   );
+  const [normalMaxCartelasPerPlayer, setNormalMaxCartelasPerPlayer] =
+    useState("");
   const normalEconomicsInitializedRef = useRef(false);
   const [defaultOperationMode, setDefaultOperationMode] =
     useState<GameOperationMode>("MANUAL");
@@ -3086,6 +3088,7 @@ export function GameOperations() {
             setCreateGameCategory("NORMAL");
             setBonusFixedPrizeAmount("");
             setBonusMaxCartelasPerPlayer("5");
+            setNormalMaxCartelasPerPlayer("");
             setBigGotdEntryFee("");
             setBigGameEntryFee("");
             setBigGameFixedPrizeAmount("");
@@ -3212,16 +3215,38 @@ export function GameOperations() {
             ) : null}
 
             {createGameCategory === "NORMAL" ? (
-              <NormalEconomicsEditor
-                entryFee={normalEntryFeeDraft}
-                companyFeePerCartela={normalCommissionDraft}
-                prizePerCartela={computePrizePerCartelaFromEconomics(
-                  normalEntryFeeDraft,
-                  normalCommissionDraft,
-                )}
-                onEntryFeeChange={setNormalEntryFeeDraft}
-                onCommissionChange={setNormalCommissionDraft}
-              />
+              <div className="space-y-4">
+                <NormalEconomicsEditor
+                  entryFee={normalEntryFeeDraft}
+                  companyFeePerCartela={normalCommissionDraft}
+                  prizePerCartela={computePrizePerCartelaFromEconomics(
+                    normalEntryFeeDraft,
+                    normalCommissionDraft,
+                  )}
+                  onEntryFeeChange={setNormalEntryFeeDraft}
+                  onCommissionChange={setNormalCommissionDraft}
+                />
+                <div className="space-y-2">
+                  <Label htmlFor="normal-max-cartelas">
+                    Max cartelas per player
+                  </Label>
+                  <Input
+                    id="normal-max-cartelas"
+                    type="number"
+                    min={1}
+                    max={100}
+                    placeholder="Leave blank for unlimited"
+                    value={normalMaxCartelasPerPlayer}
+                    onChange={(event) =>
+                      setNormalMaxCartelasPerPlayer(event.target.value)
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional. When set, the backend blocks players from
+                    registering more than this many cartelas in the session.
+                  </p>
+                </div>
+              </div>
             ) : null}
 
             {createGameCategory === "BIG_GAME" ? (
@@ -3411,6 +3436,22 @@ export function GameOperations() {
                     setCreateGameError(economicsError);
                     return;
                   }
+
+                  const trimmedNormalMax = normalMaxCartelasPerPlayer.trim();
+                  if (trimmedNormalMax !== "") {
+                    const maxCartelas = Number(trimmedNormalMax);
+                    if (
+                      !Number.isFinite(maxCartelas) ||
+                      !Number.isInteger(maxCartelas) ||
+                      maxCartelas < 1 ||
+                      maxCartelas > 100
+                    ) {
+                      setCreateGameError(
+                        "Enter a valid max cartelas per player (1–100), or leave blank for unlimited.",
+                      );
+                      return;
+                    }
+                  }
                 }
 
                 const defaults = getCreateFormDefaults(
@@ -3420,6 +3461,14 @@ export function GameOperations() {
 
                 const baselineEconomics =
                   resolveNormalEconomicsFromTimeConfig(timeConfig);
+
+                const trimmedNormalMaxCartelas =
+                  normalMaxCartelasPerPlayer.trim();
+                const normalMaxCartelasValue =
+                  createGameCategory === "NORMAL" &&
+                  trimmedNormalMaxCartelas !== ""
+                    ? Number(trimmedNormalMaxCartelas)
+                    : undefined;
 
                 lastCreateCategoryRef.current = createGameCategory;
                 createGame.mutate({
@@ -3435,6 +3484,9 @@ export function GameOperations() {
                           fixedPrizeAmount: bonusFixedPrizeAmount.trim(),
                           maxCartelasPerPlayer: Number(bonusMaxCartelasPerPlayer),
                         }
+                      : {}),
+                    ...(normalMaxCartelasValue != null
+                      ? { maxCartelasPerPlayer: normalMaxCartelasValue }
                       : {}),
                     operationMode: defaults.operationMode,
                     ...(defaults.operationMode === "AUTO"
