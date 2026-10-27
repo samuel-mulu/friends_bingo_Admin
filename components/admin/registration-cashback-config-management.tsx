@@ -138,7 +138,7 @@ export function RegistrationCashbackConfigManagement() {
               type="button"
               disabled={!isDirty}
               isLoading={saveMutation.isPending}
-              onClick={() => saveMutation.mutate()}
+              onClick={() => saveMutation.mutate(undefined)}
             >
               Save
             </LoadingButton>
