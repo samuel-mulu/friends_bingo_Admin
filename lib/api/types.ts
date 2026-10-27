@@ -453,6 +453,18 @@ export interface UpdateDepositApprovalConfigPayload {
   }>;
 }
 
+export interface DepositManualApprovalPinConfig {
+  id: string;
+  updatedAt: string;
+  updatedById: string | null;
+  storedInDatabase: boolean;
+}
+
+export interface ChangeDepositManualApprovalPinPayload {
+  currentPin: string;
+  newPin: string;
+}
+
 export type WinnerPhoneDisplayMode = "HIDDEN" | "FULL" | "MASKED";
 
 export interface AppDisplayConfig {
@@ -706,6 +718,7 @@ export interface AdminBroadcast {
   title: string;
   body: string;
   category: AdminBroadcastCategory;
+  forcedLive?: boolean;
   createdAt: string;
   createdById?: string | null;
 }
@@ -714,6 +727,24 @@ export interface CreateAdminBroadcastPayload {
   title: string;
   body: string;
   category: AdminBroadcastCategory;
+}
+
+export interface RegistrationCashbackTier {
+  minCartelasInSession: number;
+  rewardEtb: string;
+}
+
+export interface RegistrationCashbackConfig {
+  id: string;
+  enabled: boolean;
+  tiers: RegistrationCashbackTier[];
+  updatedAt: string;
+  updatedById?: string | null;
+}
+
+export interface UpdateRegistrationCashbackConfigPayload {
+  enabled?: boolean;
+  tiers?: RegistrationCashbackTier[];
 }
 
 export interface CreateExpensePayload {
@@ -744,6 +775,8 @@ export interface FinancialReport {
   bonusGamePrizePaidTotal: string;
   netRevenue: string;
   registeredCartelasCount: number;
+  registrationCashbackPaidTotal?: string;
+  registrationCashbackGrantCount?: number;
   companyFeeTotal: string;
   bonusEntryValueTotal: string;
   bonusCompanyFeeTotal: string;
@@ -810,6 +843,8 @@ export interface GamesReport {
   gamesCreated: number;
   gamesFinished: number;
   totalRegistrations: number;
+  registrationCashbackPaidTotal?: string;
+  registrationCashbackGrantCount?: number;
   totalEntryFees: string;
   bonusEntryValueTotal: string;
   bonusCartelasUsed: number;

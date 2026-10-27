@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { BellRing, Trash2 } from "lucide-react";
 
 import {
   createAdminBroadcast,
   deleteAdminBroadcast,
   getAdminBroadcasts,
+  remindAdminBroadcast,
+  setAdminBroadcastForcedLive,
 } from "@/lib/api/admin";
 import type { AdminBroadcast, AdminBroadcastCategory } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/formatters";
@@ -56,7 +58,8 @@ const categoryOptions: Array<{
   {
     value: "FORCED",
     label: "Forced modal",
-    description: "Blocks the app until you delete this message.",
+    description:
+      "Blocks the app for all players while it is on. Turn it off to hide from players without deleting.",
   },
 ];
 
@@ -64,11 +67,18 @@ function categoryLabel(category: AdminBroadcastCategory) {
   return categoryOptions.find((option) => option.value === category)?.label ?? category;
 }
 
+function isForcedLive(broadcast: AdminBroadcast) {
+  return broadcast.category === "FORCED" && broadcast.forcedLive === true;
+}
+
 export function MessagesManagement() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState<AdminBroadcastCategory>("DISMISSIBLE");
   const [deleteTarget, setDeleteTarget] = useState<AdminBroadcast | null>(null);
+  const [pendingForcedReplace, setPendingForcedReplace] = useState(false);
+  const [pendingForcedActivate, setPendingForcedActivate] =
+    useState<AdminBroadcast | null>(null);
 
   const broadcastsQuery = useQuery({
     queryKey: broadcastsQueryKey,
@@ -84,7 +94,15 @@ export function MessagesManagement() {
       setTitle("");
       setBody("");
       setCategory("DISMISSIBLE");
+      setPendingForcedReplace(false);
     },
+  });
+
+  const remindMutation = useAdminMutation({
+    mutationFn: (broadcastId: string) => remindAdminBroadcast(broadcastId),
+    successMessage: "Reminder sent to all players.",
+    errorMessage: "The reminder could not be sent.",
+    invalidateQueryKeys: [broadcastsQueryKey],
   });
 
   const deleteMutation = useAdminMutation({
@@ -97,6 +115,17 @@ export function MessagesManagement() {
     },
   });
 
+  const forcedLiveMutation = useAdminMutation({
+    mutationFn: ({ id, live }: { id: string; live: boolean }) =>
+      setAdminBroadcastForcedLive(id, live),
+    successMessage: "Forced message updated.",
+    errorMessage: "The forced message could not be updated.",
+    invalidateQueryKeys: [broadcastsQueryKey],
+    onSuccess: () => {
+      setPendingForcedActivate(null);
+    },
+  });
+
   const selectedCategory = useMemo(
     () => categoryOptions.find((option) => option.value === category),
     [category],
@@ -106,17 +135,55 @@ export function MessagesManagement() {
     return title.trim().length > 0 && body.trim().length > 0;
   }, [body, title]);
 
+  const hasLiveForced = useMemo(() => {
+    return (broadcastsQuery.data ?? []).some(isForcedLive);
+  }, [broadcastsQuery.data]);
+
+  const submitBroadcast = () => {
+    createMutation.mutate({
+      title: title.trim(),
+      body: body.trim(),
+      category,
+    });
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit || createMutation.isPending) {
       return;
     }
 
-    createMutation.mutate({
-      title: title.trim(),
-      body: body.trim(),
-      category,
-    });
+    if (category === "FORCED" && hasLiveForced) {
+      setPendingForcedReplace(true);
+      return;
+    }
+
+    submitBroadcast();
+  };
+
+  const requestForcedLiveChange = (broadcast: AdminBroadcast, live: boolean) => {
+    if (broadcast.category !== "FORCED") {
+      return;
+    }
+
+    if (!live) {
+      forcedLiveMutation.mutate({ id: broadcast.id, live: false });
+      return;
+    }
+
+    if (broadcast.forcedLive === true) {
+      return;
+    }
+
+    const otherLive = (broadcastsQuery.data ?? []).find(
+      (item) => isForcedLive(item) && item.id !== broadcast.id,
+    );
+    if (otherLive) {
+      setPendingForcedActivate(broadcast);
+      return;
+    }
+
+    forcedLiveMutation.mutate({ id: broadcast.id, live: true });
   };
 
   return (
@@ -125,8 +192,8 @@ export function MessagesManagement() {
         <CardHeader>
           <CardTitle>New broadcast</CardTitle>
           <CardDescription>
-            Choose the message type before sending. Forced messages replace any
-            previous forced message automatically.
+            Choose the message type before sending. A new forced message goes live
+            immediately and turns off any other live forced message.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -135,9 +202,9 @@ export function MessagesManagement() {
               <Label htmlFor="broadcast-category">Message type</Label>
               <Select
                 value={category}
-                onValueChange={(value) =>
-                  setCategory(value as AdminBroadcastCategory)
-                }
+                onValueChange={(value) => {
+                  setCategory(value as AdminBroadcastCategory);
+                }}
               >
                 <SelectTrigger id="broadcast-category">
                   <SelectValue placeholder="Select message type" />
@@ -196,8 +263,10 @@ export function MessagesManagement() {
         <CardHeader>
           <CardTitle>Sent messages</CardTitle>
           <CardDescription>
-            Deleting a broadcast removes it for all players. Deleting a forced
-            message lets players use the app again.
+            Use the bell on dismissible messages to show them again to everyone
+            who closed them. For forced messages, turn off to hide from players
+            without deleting; turn on again to show a fresh blocking modal.
+            Delete permanently removes a message.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -239,6 +308,15 @@ export function MessagesManagement() {
                         <Badge variant="secondary">
                           {categoryLabel(broadcast.category)}
                         </Badge>
+                        {broadcast.category === "FORCED" ? (
+                          <Badge
+                            variant={
+                              broadcast.forcedLive ? "default" : "outline"
+                            }
+                          >
+                            {broadcast.forcedLive ? "On" : "Off"}
+                          </Badge>
+                        ) : null}
                       </div>
                       <p className="text-sm text-muted-foreground">
                         {formatDateTime(broadcast.createdAt)}
@@ -247,17 +325,58 @@ export function MessagesManagement() {
                     <p className="whitespace-pre-wrap text-sm leading-6">
                       {broadcast.body}
                     </p>
+                    {broadcast.category === "FORCED" ? (
+                      <div className="flex items-center gap-3 pt-1">
+                        <Label
+                          htmlFor={`forced-live-${broadcast.id}`}
+                          className="text-sm font-normal text-muted-foreground"
+                        >
+                          Live for players
+                        </Label>
+                        <input
+                          id={`forced-live-${broadcast.id}`}
+                          type="checkbox"
+                          className="size-4 rounded border-input"
+                          checked={broadcast.forcedLive === true}
+                          disabled={forcedLiveMutation.isPending}
+                          onChange={(event) => {
+                            requestForcedLiveChange(
+                              broadcast,
+                              event.target.checked,
+                            );
+                          }}
+                        />
+                      </div>
+                    ) : null}
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label={`Delete ${broadcast.title}`}
-                    disabled={deleteMutation.isPending}
-                    onClick={() => setDeleteTarget(broadcast)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {broadcast.category === "DISMISSIBLE" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Remind ${broadcast.title}`}
+                        disabled={
+                          remindMutation.isPending || deleteMutation.isPending
+                        }
+                        onClick={() => remindMutation.mutate(broadcast.id)}
+                      >
+                        <BellRing className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Delete ${broadcast.title}`}
+                      disabled={
+                        deleteMutation.isPending || remindMutation.isPending
+                      }
+                      onClick={() => setDeleteTarget(broadcast)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))
@@ -266,11 +385,50 @@ export function MessagesManagement() {
       </Card>
 
       <ConfirmActionDialog
+        open={pendingForcedReplace}
+        title="Replace live forced message?"
+        description="Sending this forced message will turn off the current live one for all players and show this notice instead."
+        confirmLabel="Send forced message"
+        isPending={createMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingForcedReplace(false);
+          }
+        }}
+        onConfirm={() => {
+          submitBroadcast();
+        }}
+      />
+
+      <ConfirmActionDialog
+        open={pendingForcedActivate != null}
+        title="Change live forced message?"
+        description="Turning this message on will turn off the current live forced message for all players and show this one instead."
+        confirmLabel="Turn on"
+        isPending={forcedLiveMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingForcedActivate(null);
+          }
+        }}
+        onConfirm={() => {
+          if (!pendingForcedActivate) {
+            return;
+          }
+
+          forcedLiveMutation.mutate({
+            id: pendingForcedActivate.id,
+            live: true,
+          });
+        }}
+      />
+
+      <ConfirmActionDialog
         open={deleteTarget != null}
         title="Delete broadcast?"
         description={
-          deleteTarget?.category === "FORCED"
-            ? "Players will be able to use the app again immediately after this forced message is removed."
+          deleteTarget?.category === "FORCED" && deleteTarget.forcedLive
+            ? "Players will be able to use the app again immediately after this live forced message is removed."
             : "This removes the message for every player immediately."
         }
         confirmLabel="Delete"

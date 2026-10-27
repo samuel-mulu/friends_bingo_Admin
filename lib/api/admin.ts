@@ -27,6 +27,8 @@ import type {
   WithdrawalStatus,
   CreateExpensePayload,
   CreateAdminBroadcastPayload,
+  RegistrationCashbackConfig,
+  UpdateRegistrationCashbackConfigPayload,
   CalledNumbersResponse,
   CallNumberPayload,
   ChainRoundResult,
@@ -40,6 +42,8 @@ import type {
   GameTimingConfig,
   DepositApprovalConfig,
   UpdateDepositApprovalConfigPayload,
+  DepositManualApprovalPinConfig,
+  ChangeDepositManualApprovalPinPayload,
   AppDisplayConfig,
   UpdateAppDisplayConfigPayload,
   NotificationConfig,
@@ -629,13 +633,13 @@ export function getAdminGameRules() {
 }
 
 export function createAdminGame(payload: CreateGamePayload) {
-  return apiRequest<
-    AdminGame & { operations?: GameOperationsCurrentResponse }
-  >({
-    url: "/admin/slots",
-    method: "POST",
-    data: payload,
-  });
+  return apiRequest<AdminGame & { operations?: GameOperationsCurrentResponse }>(
+    {
+      url: "/admin/slots",
+      method: "POST",
+      data: payload,
+    },
+  );
 }
 
 export function updateAdminGameStatus(
@@ -913,6 +917,23 @@ export function updateAdminDepositApprovalConfig(
   });
 }
 
+export function getAdminDepositManualApprovalPinConfig() {
+  return apiRequest<DepositManualApprovalPinConfig>({
+    url: "/admin/deposit-manual-approval-pin",
+    method: "GET",
+  });
+}
+
+export function changeAdminDepositManualApprovalPin(
+  payload: ChangeDepositManualApprovalPinPayload,
+) {
+  return apiRequest<DepositManualApprovalPinConfig>({
+    url: "/admin/deposit-manual-approval-pin/change",
+    method: "POST",
+    data: payload,
+  });
+}
+
 export function resetAdminTelebirrFallback() {
   return apiRequest<DepositApprovalConfig>({
     url: "/admin/deposit-config/telebirr/reset-fallback",
@@ -927,9 +948,28 @@ export function getAdminDisplayConfig() {
   });
 }
 
-export function updateAdminDisplayConfig(payload: UpdateAppDisplayConfigPayload) {
+export function updateAdminDisplayConfig(
+  payload: UpdateAppDisplayConfigPayload,
+) {
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function getRegistrationCashbackConfig() {
+  return apiRequest<RegistrationCashbackConfig>({
+    url: "/admin/registration-cashback-config",
+    method: "GET",
+  });
+}
+
+export function updateRegistrationCashbackConfig(
+  payload: UpdateRegistrationCashbackConfigPayload,
+) {
+  return apiRequest<RegistrationCashbackConfig>({
+    url: "/admin/registration-cashback-config",
     method: "PATCH",
     data: payload,
   });
@@ -987,6 +1027,21 @@ export function deleteAdminBroadcast(id: string) {
   return apiRequest<{ success: boolean }>({
     url: `/admin/broadcasts/${id}`,
     method: "DELETE",
+  });
+}
+
+export function setAdminBroadcastForcedLive(id: string, live: boolean) {
+  return apiRequest<AdminBroadcast>({
+    url: `/admin/broadcasts/${id}/forced-live`,
+    method: "PATCH",
+    data: { live },
+  });
+}
+
+export function remindAdminBroadcast(id: string) {
+  return apiRequest<AdminBroadcast>({
+    url: `/admin/broadcasts/${id}/remind`,
+    method: "POST",
   });
 }
 
