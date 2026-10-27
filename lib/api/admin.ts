@@ -42,6 +42,8 @@ import type {
   GameTimingConfig,
   DepositApprovalConfig,
   UpdateDepositApprovalConfigPayload,
+  DepositManualApprovalPinConfig,
+  ChangeDepositManualApprovalPinPayload,
   AppDisplayConfig,
   UpdateAppDisplayConfigPayload,
   NotificationConfig,
@@ -915,6 +917,23 @@ export function updateAdminDepositApprovalConfig(
   });
 }
 
+export function getAdminDepositManualApprovalPinConfig() {
+  return apiRequest<DepositManualApprovalPinConfig>({
+    url: "/admin/deposit-manual-approval-pin",
+    method: "GET",
+  });
+}
+
+export function changeAdminDepositManualApprovalPin(
+  payload: ChangeDepositManualApprovalPinPayload,
+) {
+  return apiRequest<DepositManualApprovalPinConfig>({
+    url: "/admin/deposit-manual-approval-pin/change",
+    method: "POST",
+    data: payload,
+  });
+}
+
 export function getAdminDisplayConfig() {
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
@@ -999,6 +1018,14 @@ export function deleteAdminBroadcast(id: string) {
   return apiRequest<{ success: boolean }>({
     url: `/admin/broadcasts/${id}`,
     method: "DELETE",
+  });
+}
+
+export function setAdminBroadcastForcedLive(id: string, live: boolean) {
+  return apiRequest<AdminBroadcast>({
+    url: `/admin/broadcasts/${id}/forced-live`,
+    method: "PATCH",
+    data: { live },
   });
 }
 

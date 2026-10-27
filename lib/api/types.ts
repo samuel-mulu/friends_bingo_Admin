@@ -439,6 +439,18 @@ export interface UpdateDepositApprovalConfigPayload {
   }>;
 }
 
+export interface DepositManualApprovalPinConfig {
+  id: string;
+  updatedAt: string;
+  updatedById: string | null;
+  storedInDatabase: boolean;
+}
+
+export interface ChangeDepositManualApprovalPinPayload {
+  currentPin: string;
+  newPin: string;
+}
+
 export type WinnerPhoneDisplayMode = "HIDDEN" | "FULL" | "MASKED";
 
 export interface AppDisplayConfig {
@@ -692,7 +704,7 @@ export interface AdminBroadcast {
   title: string;
   body: string;
   category: AdminBroadcastCategory;
-  playerCanDismiss?: boolean;
+  forcedLive?: boolean;
   createdAt: string;
   createdById?: string | null;
 }
@@ -701,7 +713,6 @@ export interface CreateAdminBroadcastPayload {
   title: string;
   body: string;
   category: AdminBroadcastCategory;
-  playerCanDismiss?: boolean;
 }
 
 export interface RegistrationCashbackTier {
