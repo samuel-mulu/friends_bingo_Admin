@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { BellRing, Trash2 } from "lucide-react";
 
 import {
   createAdminBroadcast,
   deleteAdminBroadcast,
   getAdminBroadcasts,
+  remindAdminBroadcast,
 } from "@/lib/api/admin";
 import type { AdminBroadcast, AdminBroadcastCategory } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/formatters";
@@ -56,7 +57,8 @@ const categoryOptions: Array<{
   {
     value: "FORCED",
     label: "Forced modal",
-    description: "Blocks the app until you delete this message.",
+    description:
+      "Blocks the app until you delete it, or until the player closes it when allowed below.",
   },
 ];
 
@@ -68,7 +70,9 @@ export function MessagesManagement() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState<AdminBroadcastCategory>("DISMISSIBLE");
+  const [playerCanDismiss, setPlayerCanDismiss] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AdminBroadcast | null>(null);
+  const [pendingForcedReplace, setPendingForcedReplace] = useState(false);
 
   const broadcastsQuery = useQuery({
     queryKey: broadcastsQueryKey,
@@ -84,7 +88,16 @@ export function MessagesManagement() {
       setTitle("");
       setBody("");
       setCategory("DISMISSIBLE");
+      setPlayerCanDismiss(false);
+      setPendingForcedReplace(false);
     },
+  });
+
+  const remindMutation = useAdminMutation({
+    mutationFn: (broadcastId: string) => remindAdminBroadcast(broadcastId),
+    successMessage: "Reminder sent to all players.",
+    errorMessage: "The reminder could not be sent.",
+    invalidateQueryKeys: [broadcastsQueryKey],
   });
 
   const deleteMutation = useAdminMutation({
@@ -106,17 +119,32 @@ export function MessagesManagement() {
     return title.trim().length > 0 && body.trim().length > 0;
   }, [body, title]);
 
+  const submitBroadcast = () => {
+    createMutation.mutate({
+      title: title.trim(),
+      body: body.trim(),
+      category,
+      ...(category === "FORCED"
+        ? { playerCanDismiss }
+        : { playerCanDismiss: undefined }),
+    });
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canSubmit || createMutation.isPending) {
       return;
     }
 
-    createMutation.mutate({
-      title: title.trim(),
-      body: body.trim(),
-      category,
-    });
+    const hasActiveForced = (broadcastsQuery.data ?? []).some(
+      (item) => item.category === "FORCED",
+    );
+    if (category === "FORCED" && hasActiveForced) {
+      setPendingForcedReplace(true);
+      return;
+    }
+
+    submitBroadcast();
   };
 
   return (
@@ -135,9 +163,13 @@ export function MessagesManagement() {
               <Label htmlFor="broadcast-category">Message type</Label>
               <Select
                 value={category}
-                onValueChange={(value) =>
-                  setCategory(value as AdminBroadcastCategory)
-                }
+                onValueChange={(value) => {
+                  const next = value as AdminBroadcastCategory;
+                  setCategory(next);
+                  if (next !== "FORCED") {
+                    setPlayerCanDismiss(false);
+                  }
+                }}
               >
                 <SelectTrigger id="broadcast-category">
                   <SelectValue placeholder="Select message type" />
@@ -156,6 +188,31 @@ export function MessagesManagement() {
                 </p>
               ) : null}
             </div>
+            {category === "FORCED" ? (
+              <div className="flex items-start gap-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+                <input
+                  id="broadcast-player-can-dismiss"
+                  type="checkbox"
+                  className="mt-1 size-4 rounded border-input"
+                  checked={playerCanDismiss}
+                  onChange={(event) =>
+                    setPlayerCanDismiss(event.target.checked)
+                  }
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="broadcast-player-can-dismiss"
+                    className="cursor-pointer"
+                  >
+                    Allow players to close
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    When off, only deleting this message in admin removes it for
+                    everyone. When on, each player can close it for themselves.
+                  </p>
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="broadcast-title">Title</Label>
               <Input
@@ -196,8 +253,9 @@ export function MessagesManagement() {
         <CardHeader>
           <CardTitle>Sent messages</CardTitle>
           <CardDescription>
-            Deleting a broadcast removes it for all players. Deleting a forced
-            message lets players use the app again.
+            Use the bell on dismissible messages to show them again to everyone
+            who closed them. Deleting removes a message for all players;
+            deleting a forced message unblocks players who could not close it.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -248,22 +306,56 @@ export function MessagesManagement() {
                       {broadcast.body}
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label={`Delete ${broadcast.title}`}
-                    disabled={deleteMutation.isPending}
-                    onClick={() => setDeleteTarget(broadcast)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {broadcast.category === "DISMISSIBLE" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label={`Remind ${broadcast.title}`}
+                        disabled={
+                          remindMutation.isPending || deleteMutation.isPending
+                        }
+                        onClick={() => remindMutation.mutate(broadcast.id)}
+                      >
+                        <BellRing className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Delete ${broadcast.title}`}
+                      disabled={
+                        deleteMutation.isPending || remindMutation.isPending
+                      }
+                      onClick={() => setDeleteTarget(broadcast)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))
           )}
         </CardContent>
       </Card>
+
+      <ConfirmActionDialog
+        open={pendingForcedReplace}
+        title="Replace forced message?"
+        description="Sending this forced message will remove the current one for all players and show this notice instead."
+        confirmLabel="Send forced message"
+        isPending={createMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingForcedReplace(false);
+          }
+        }}
+        onConfirm={() => {
+          submitBroadcast();
+        }}
+      />
 
       <ConfirmActionDialog
         open={deleteTarget != null}

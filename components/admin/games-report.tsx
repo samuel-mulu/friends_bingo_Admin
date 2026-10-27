@@ -444,6 +444,16 @@ export function GamesReportView() {
               icon={<Target className="size-5" />}
             />
             <ReportMetricCard
+              title="Cartela cashback paid"
+              value={formatCurrency(
+                gamesQuery.data.registrationCashbackPaidTotal ?? "0",
+              )}
+              description={`${(
+                gamesQuery.data.registrationCashbackGrantCount ?? 0
+              ).toLocaleString()} player grants in period`}
+              icon={<Target className="size-5" />}
+            />
+            <ReportMetricCard
               title="Bonus Entry Value"
               value={formatCurrency(gamesQuery.data.bonusEntryValueTotal)}
               description={`${gamesQuery.data.bonusCartelasUsed.toLocaleString()} bonus cartelas used`}

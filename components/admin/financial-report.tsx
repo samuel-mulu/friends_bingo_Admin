@@ -545,6 +545,16 @@ export function FinancialReportView() {
               icon={<ReceiptText className="size-5" />}
             />
             <ReportMetricCard
+              title="Cartela cashback paid"
+              value={formatCurrency(
+                financialQuery.data.registrationCashbackPaidTotal ?? "0",
+              )}
+              description={`${(
+                financialQuery.data.registrationCashbackGrantCount ?? 0
+              ).toLocaleString()} grants in period`}
+              icon={<Coins className="size-5" />}
+            />
+            <ReportMetricCard
               title="Prize Paid Total"
               value={formatCurrency(financialQuery.data.prizePaidTotal)}
               description="All prize credits paid to winners"

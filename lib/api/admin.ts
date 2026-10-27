@@ -27,6 +27,8 @@ import type {
   WithdrawalStatus,
   CreateExpensePayload,
   CreateAdminBroadcastPayload,
+  RegistrationCashbackConfig,
+  UpdateRegistrationCashbackConfigPayload,
   CalledNumbersResponse,
   CallNumberPayload,
   ChainRoundResult,
@@ -928,6 +930,23 @@ export function updateAdminDisplayConfig(payload: UpdateAppDisplayConfigPayload)
   });
 }
 
+export function getRegistrationCashbackConfig() {
+  return apiRequest<RegistrationCashbackConfig>({
+    url: "/admin/registration-cashback-config",
+    method: "GET",
+  });
+}
+
+export function updateRegistrationCashbackConfig(
+  payload: UpdateRegistrationCashbackConfigPayload,
+) {
+  return apiRequest<RegistrationCashbackConfig>({
+    url: "/admin/registration-cashback-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
 export function getAdminNotificationConfig() {
   return apiRequest<NotificationConfig>({
     url: "/admin/notification-config",
@@ -980,6 +999,13 @@ export function deleteAdminBroadcast(id: string) {
   return apiRequest<{ success: boolean }>({
     url: `/admin/broadcasts/${id}`,
     method: "DELETE",
+  });
+}
+
+export function remindAdminBroadcast(id: string) {
+  return apiRequest<AdminBroadcast>({
+    url: `/admin/broadcasts/${id}/remind`,
+    method: "POST",
   });
 }
 
