@@ -416,13 +416,24 @@ export interface AdminDepositVerifiedData {
   approvalModeAtSubmit?: string;
 }
 
-export type DepositApprovalMode = "automatic" | "manual" | "local";
+export type DepositApprovalMode =
+  | "automatic"
+  | "manual"
+  | "local"
+  | "local_with_fallback";
 
 export interface DepositApprovalProviderConfig {
   provider: PaymentProvider;
   enabled: boolean;
   approvalMode: DepositApprovalMode;
+  effectiveApprovalMode?: DepositApprovalMode;
   allowedModes: DepositApprovalMode[];
+  fallbackThreshold?: number;
+  fallbackWindowMinutes?: number;
+  fallbackDurationMinutes?: number;
+  fallbackUntil?: string | null;
+  fallbackReason?: string | null;
+  isFallbackActive?: boolean;
   updatedAt: string;
   updatedById: string | null;
 }
@@ -436,6 +447,9 @@ export interface UpdateDepositApprovalConfigPayload {
     provider: PaymentProvider;
     enabled: boolean;
     approvalMode: DepositApprovalMode;
+    fallbackThreshold?: number;
+    fallbackWindowMinutes?: number;
+    fallbackDurationMinutes?: number;
   }>;
 }
 

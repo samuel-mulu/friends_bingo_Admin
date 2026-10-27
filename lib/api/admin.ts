@@ -913,6 +913,13 @@ export function updateAdminDepositApprovalConfig(
   });
 }
 
+export function resetAdminTelebirrFallback() {
+  return apiRequest<DepositApprovalConfig>({
+    url: "/admin/deposit-config/telebirr/reset-fallback",
+    method: "POST",
+  });
+}
+
 export function getAdminDisplayConfig() {
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
