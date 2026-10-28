@@ -470,12 +470,14 @@ export type WinnerPhoneDisplayMode = "HIDDEN" | "FULL" | "MASKED";
 export interface AppDisplayConfig {
   id: string;
   winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
+  bigGamePromotionCardEnabled: boolean;
   updatedAt: string;
   updatedById: string | null;
 }
 
 export interface UpdateAppDisplayConfigPayload {
-  winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
+  winnerPhoneDisplayMode?: WinnerPhoneDisplayMode;
+  bigGamePromotionCardEnabled?: boolean;
 }
 
 export interface NotificationConfig {

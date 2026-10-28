@@ -67,6 +67,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { BigGamePromotionCardConfig } from "@/components/admin/big-game-promotion-card-config";
 
 import {
   approveAdminBingoClaim,
@@ -2507,6 +2508,8 @@ export function GameOperations({
           </div>
         </div>
       )}
+
+      {isBigGameSurface ? <BigGamePromotionCardConfig /> : null}
 
       {isStandardSurface && bigGameLiveElsewhere ? (
         <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-3 text-sm text-violet-950 sm:flex-row sm:items-center sm:justify-between">
