@@ -84,12 +84,12 @@ export function BigGamePromotionCardConfig() {
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 text-violet-950">
               <Megaphone className="h-5 w-5 text-violet-600" />
-              App promo card
+              Big Game promotion
             </CardTitle>
             <CardDescription>
-              Controls the centered BIG GAME card in the mobile app (Games tab
-              and other tabs). When off, players are not prompted to open Big
-              Game. The thin strip on the Games screen is unchanged.
+              Controls Big Game prompts in the mobile app: the centered card on
+              Wallet and other tabs, and the thin strip at the top of the Games
+              screen during a normal live round. When off, neither appears.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -122,12 +122,12 @@ export function BigGamePromotionCardConfig() {
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 p-4">
           <div className="space-y-1">
             <Label htmlFor="big-game-promotion-card-enabled">
-              Show Big Game promo card
+              Show Big Game promotion
             </Label>
             <p className="text-sm text-muted-foreground">
-              When enabled, logged-in players see the promo while a Big Game is
-              actionable (registration open, waiting, or live). When disabled,
-              no centered promo appears.
+              When enabled, logged-in players see Big Game prompts while an
+              event is actionable (registration open, waiting, or live). When
+              disabled, the overlay and Games strip are both hidden.
             </p>
             {configQuery.data?.updatedAt ? (
               <p className="text-xs text-muted-foreground">
