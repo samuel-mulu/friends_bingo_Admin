@@ -471,6 +471,7 @@ export interface AppDisplayConfig {
   id: string;
   winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
   bigGamePromotionCardEnabled: boolean;
+  bingoClaimLastSecondLockEnabled: boolean;
   updatedAt: string;
   updatedById: string | null;
 }
@@ -478,6 +479,7 @@ export interface AppDisplayConfig {
 export interface UpdateAppDisplayConfigPayload {
   winnerPhoneDisplayMode?: WinnerPhoneDisplayMode;
   bigGamePromotionCardEnabled?: boolean;
+  bingoClaimLastSecondLockEnabled?: boolean;
 }
 
 export interface NotificationConfig {
