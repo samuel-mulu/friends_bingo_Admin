@@ -46,6 +46,8 @@ import type {
   ChangeDepositManualApprovalPinPayload,
   AppDisplayConfig,
   UpdateAppDisplayConfigPayload,
+  AppSupportConfig,
+  UpdateAppSupportConfigPayload,
   NotificationConfig,
   UpdateNotificationConfigPayload,
   ChangeAdminPasswordPayload,
@@ -953,6 +955,23 @@ export function updateAdminDisplayConfig(
 ) {
   return apiRequest<AppDisplayConfig>({
     url: "/admin/display-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function getAdminSupportConfig() {
+  return apiRequest<AppSupportConfig>({
+    url: "/admin/support-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminSupportConfig(
+  payload: UpdateAppSupportConfigPayload,
+) {
+  return apiRequest<AppSupportConfig>({
+    url: "/admin/support-config",
     method: "PATCH",
     data: payload,
   });

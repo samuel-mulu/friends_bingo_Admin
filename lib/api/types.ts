@@ -471,7 +471,6 @@ export interface AppDisplayConfig {
   id: string;
   winnerPhoneDisplayMode: WinnerPhoneDisplayMode;
   bigGamePromotionCardEnabled: boolean;
-  bingoClaimLastSecondLockEnabled: boolean;
   updatedAt: string;
   updatedById: string | null;
 }
@@ -479,7 +478,23 @@ export interface AppDisplayConfig {
 export interface UpdateAppDisplayConfigPayload {
   winnerPhoneDisplayMode?: WinnerPhoneDisplayMode;
   bigGamePromotionCardEnabled?: boolean;
-  bingoClaimLastSecondLockEnabled?: boolean;
+}
+
+export interface AppSupportConfig {
+  id: string;
+  phoneNumber1: string;
+  phoneNumber2: string;
+  telegramUsername: string;
+  termsBody: string;
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface UpdateAppSupportConfigPayload {
+  phoneNumber1?: string;
+  phoneNumber2?: string;
+  telegramUsername?: string;
+  termsBody?: string;
 }
 
 export interface NotificationConfig {
