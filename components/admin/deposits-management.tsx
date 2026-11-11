@@ -4,9 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, MessageSquare, RotateCcw, Search, XCircle } from "lucide-react";
 
-import { approveDeposit, getAdminDeposits, rejectDeposit } from "@/lib/api/admin";
+import {
+  approveDeposit,
+  getAdminDeposits,
+  getAdminUsers,
+  rejectDeposit,
+} from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import type { AdminDeposit, AdminDepositProviderOption, DepositStatus, PaymentProvider } from "@/lib/api/types";
+import type {
+  AdminDeposit,
+  AdminDepositProviderOption,
+  DepositStatus,
+  PaymentProvider,
+  WithdrawalApprovalSource,
+} from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { PlayerSendFeedbackDialog } from "@/components/admin/player-send-feedback-dialog";
@@ -47,26 +58,72 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+function depositApproverLabel(deposit: AdminDeposit): string {
+  if (deposit.approvalSource === "AUTOMATIC") {
+    return "Automatic";
+  }
+  if (deposit.approvalSource === "LOCAL") {
+    return "Local";
+  }
+  if (deposit.approvalSource === "MANUAL") {
+    return deposit.approvedBy?.fullName?.trim() || "Manual";
+  }
+  return "-";
+}
+
 const pageSize = 20;
 const ALL_PROVIDERS = "all" as const;
 const ALL_STATUSES = "all" as const;
+const ALL_APPROVERS = "all" as const;
+const APPROVER_AUTOMATIC = "AUTOMATIC" as const;
+const APPROVER_LOCAL = "LOCAL" as const;
 const DATE_MODE_ALL = "all" as const;
 const DATE_MODE_RANGE = "range" as const;
 
 type ProviderFilter = typeof ALL_PROVIDERS | PaymentProvider;
 type StatusFilter = typeof ALL_STATUSES | DepositStatus;
+type ApproverFilter =
+  | typeof ALL_APPROVERS
+  | typeof APPROVER_AUTOMATIC
+  | typeof APPROVER_LOCAL
+  | string;
 type DateMode = typeof DATE_MODE_ALL | typeof DATE_MODE_RANGE;
+
+function approvalQuery(approver: ApproverFilter): {
+  approvalSource?: WithdrawalApprovalSource;
+  approvedById?: string;
+} {
+  if (approver === APPROVER_AUTOMATIC || approver === APPROVER_LOCAL) {
+    return { approvalSource: approver };
+  }
+  if (approver !== ALL_APPROVERS) {
+    return { approvedById: approver };
+  }
+  return {};
+}
 
 const depositsQueryKey = (
   page: number,
   search: string,
   provider: ProviderFilter,
   status: StatusFilter,
+  approver: ApproverFilter,
   dateMode: DateMode,
   from: string,
   to: string,
 ) =>
-  ["admin", "deposits", page, search, provider, status, dateMode, from, to] as const;
+  [
+    "admin",
+    "deposits",
+    page,
+    search,
+    provider,
+    status,
+    approver,
+    dateMode,
+    from,
+    to,
+  ] as const;
 
 const actionableStatuses = new Set(["PENDING"]);
 
@@ -112,6 +169,8 @@ export function DepositsManagement() {
   const [providerFilter, setProviderFilter] =
     useState<ProviderFilter>(ALL_PROVIDERS);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
+  const [approverFilter, setApproverFilter] =
+    useState<ApproverFilter>(ALL_APPROVERS);
   const [dateMode, setDateMode] = useState<DateMode>(DATE_MODE_ALL);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -136,12 +195,31 @@ export function DepositsManagement() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
+  const approversQuery = useQuery({
+    queryKey: ["admin", "users", "deposit-approvers"],
+    queryFn: () =>
+      getAdminUsers(1, 100, {
+        role: "ADMIN",
+        sortBy: "createdAt",
+        sortOrder: "asc",
+      }),
+    staleTime: 60_000,
+  });
+
+  const approverOptions = useMemo(() => {
+    const items = approversQuery.data?.items ?? [];
+    return [...items].sort((left, right) =>
+      left.fullName.localeCompare(right.fullName),
+    );
+  }, [approversQuery.data?.items]);
+
   const depositsQuery = useQuery({
     queryKey: depositsQueryKey(
       page,
       debouncedSearch,
       providerFilter,
       statusFilter,
+      approverFilter,
       dateMode,
       activeFrom,
       activeTo,
@@ -152,6 +230,7 @@ export function DepositsManagement() {
         provider:
           providerFilter === ALL_PROVIDERS ? undefined : providerFilter,
         status: statusFilter === ALL_STATUSES ? undefined : statusFilter,
+        ...approvalQuery(approverFilter),
         from: activeFrom || undefined,
         to: activeTo || undefined,
       }),
@@ -209,6 +288,7 @@ export function DepositsManagement() {
     Boolean(debouncedSearch) ||
     providerFilter !== ALL_PROVIDERS ||
     statusFilter !== ALL_STATUSES ||
+    approverFilter !== ALL_APPROVERS ||
     dateMode !== DATE_MODE_ALL;
 
   const resetFilters = () => {
@@ -216,6 +296,7 @@ export function DepositsManagement() {
     setDebouncedSearch("");
     setProviderFilter(ALL_PROVIDERS);
     setStatusFilter(ALL_STATUSES);
+    setApproverFilter(ALL_APPROVERS);
     setDateMode(DATE_MODE_ALL);
     setFromDate("");
     setToDate("");
@@ -230,8 +311,8 @@ export function DepositsManagement() {
             <div className="space-y-1">
               <CardTitle>Deposit history</CardTitle>
               <CardDescription>
-                Search by reference, name, or phone. Filter by payment method
-                and date. Most deposits verify automatically.
+                Search by reference, name, or phone. Filter by payment method,
+                who approved, and date. Most deposits verify automatically.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -301,6 +382,27 @@ export function DepositsManagement() {
               >
                 Pending review
               </Button>
+              <Select
+                value={approverFilter}
+                onValueChange={(value) => {
+                  setApproverFilter(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[220px]">
+                  <SelectValue placeholder="Approved by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_APPROVERS}>All approvers</SelectItem>
+                  <SelectItem value={APPROVER_AUTOMATIC}>Automatic</SelectItem>
+                  <SelectItem value={APPROVER_LOCAL}>Local</SelectItem>
+                  {approverOptions.map((admin) => (
+                    <SelectItem key={admin.id} value={admin.id}>
+                      {admin.fullName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Select
                 value={dateMode}
                 onValueChange={(value) => {
@@ -374,7 +476,7 @@ export function DepositsManagement() {
 
         <CardContent className="px-0 pt-0">
           {depositsQuery.isLoading ? (
-            <AdminTableSkeleton columns={10} />
+            <AdminTableSkeleton columns={12} />
           ) : depositsQuery.isError ? (
             <AdminErrorState
               title="Could not load deposits"
@@ -389,7 +491,7 @@ export function DepositsManagement() {
               title={hasActiveFilters ? "No matching deposits" : "No deposits yet"}
               description={
                 hasActiveFilters
-                  ? "Try a different search, payment method, or date range."
+                  ? "Try a different search, payment method, approver, or date range."
                   : "New deposit requests will appear here as players submit them."
               }
             />
@@ -406,6 +508,8 @@ export function DepositsManagement() {
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Verified</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Approved by</TableHead>
+                    <TableHead>Approved</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -494,6 +598,16 @@ export function DepositsManagement() {
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {formatCurrency(deposit.amount)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {depositApproverLabel(deposit)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {deposit.status === "APPROVED" && deposit.verifiedAt ? (
+                            formatDateTime(deposit.verifiedAt)
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell>{formatDateTime(deposit.createdAt)}</TableCell>
                         <TableCell className="text-right">

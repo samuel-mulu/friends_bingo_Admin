@@ -542,6 +542,8 @@ export interface AdminDeposit {
   verifiedAmount?: string | null;
   verifiedReceiverName?: string | null;
   verifiedData?: AdminDepositVerifiedData | null;
+  approvalSource: WithdrawalApprovalSource | null;
+  approvedBy: WithdrawalApprover | null;
   createdAt: string;
   verifiedAt: string | null;
   updatedAt: string;

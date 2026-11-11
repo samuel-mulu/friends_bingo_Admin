@@ -310,6 +310,8 @@ export function getAdminDeposits(
     search?: string;
     provider?: PaymentProvider;
     status?: DepositStatus;
+    approvalSource?: WithdrawalApprovalSource;
+    approvedById?: string;
     from?: string;
     to?: string;
   },
@@ -323,6 +325,8 @@ export function getAdminDeposits(
       search: options?.search?.trim() || undefined,
       provider: options?.provider,
       status: options?.status,
+      approvalSource: options?.approvalSource,
+      approvedById: options?.approvedById,
       from: options?.from || undefined,
       to: options?.to || undefined,
     },
