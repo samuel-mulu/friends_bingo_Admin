@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { getAdminUserWalletTransactions } from "@/lib/api/admin";
+import {
+  getAdminGameRules,
+  getAdminUserWalletTransactions,
+} from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
 import type {
   AdminWalletTransactionCategory,
@@ -43,17 +46,20 @@ import {
 const pageSize = 20;
 const ALL_CATEGORIES = "ALL" as const;
 const ALL_STATUSES = "ALL" as const;
+const ALL_GAME_RULES = "ALL" as const;
 
 type CategoryFilter = AdminWalletTransactionCategory | typeof ALL_CATEGORIES;
 type StatusFilter =
   | AdminWalletTransactionReferenceStatus
   | typeof ALL_STATUSES;
+type GameRuleFilter = string | typeof ALL_GAME_RULES;
 
 const transactionsQueryKey = (
   userId: string,
   page: number,
   category: CategoryFilter,
   status: StatusFilter,
+  gameRuleId: GameRuleFilter,
 ) =>
   [
     "admin",
@@ -63,6 +69,7 @@ const transactionsQueryKey = (
     page,
     category,
     status,
+    gameRuleId,
   ] as const;
 
 function statusOptionsForCategory(
@@ -125,6 +132,8 @@ export function PlayerTransactionHistoryDialog({
   const [categoryFilter, setCategoryFilter] =
     useState<CategoryFilter>(ALL_CATEGORIES);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
+  const [gameRuleFilter, setGameRuleFilter] =
+    useState<GameRuleFilter>(ALL_GAME_RULES);
 
   const statusOptions = useMemo(
     () => statusOptionsForCategory(categoryFilter),
@@ -132,29 +141,64 @@ export function PlayerTransactionHistoryDialog({
   );
 
   const showStatusFilter = categorySupportsStatus(categoryFilter);
+  const showGameRuleFilter = categoryFilter === "GAME";
+
+  const gameRulesQuery = useQuery({
+    queryKey: ["admin", "game-rules"],
+    queryFn: getAdminGameRules,
+    enabled: open && showGameRuleFilter,
+    staleTime: 60_000,
+  });
+
+  const gameRuleOptions = useMemo(() => {
+    const rules = gameRulesQuery.data ?? [];
+    return [...rules].sort((left, right) => {
+      const order = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+      if (order !== 0) {
+        return order;
+      }
+      return left.name.localeCompare(right.name);
+    });
+  }, [gameRulesQuery.data]);
+
+  const activeStatusFilter = statusOptions.some(
+    (option) => option.value === statusFilter,
+  )
+    ? statusFilter
+    : ALL_STATUSES;
+  const activeGameRuleFilter =
+    showGameRuleFilter &&
+    (gameRuleFilter === ALL_GAME_RULES ||
+      !gameRulesQuery.data ||
+      gameRulesQuery.data.some((rule) => rule.id === gameRuleFilter))
+      ? gameRuleFilter
+      : ALL_GAME_RULES;
   const hasActiveFilters =
     categoryFilter !== ALL_CATEGORIES ||
-    (showStatusFilter && statusFilter !== ALL_STATUSES);
-
-  useEffect(() => {
-    if (!showStatusFilter) {
-      setStatusFilter(ALL_STATUSES);
-    } else if (!statusOptions.some((option) => option.value === statusFilter)) {
-      setStatusFilter(ALL_STATUSES);
-    }
-  }, [showStatusFilter, statusFilter, statusOptions]);
+    (showStatusFilter && activeStatusFilter !== ALL_STATUSES) ||
+    (showGameRuleFilter && activeGameRuleFilter !== ALL_GAME_RULES);
 
   const transactionsQuery = useQuery({
     queryKey: userId
-      ? transactionsQueryKey(userId, page, categoryFilter, statusFilter)
+      ? transactionsQueryKey(
+          userId,
+          page,
+          categoryFilter,
+          activeStatusFilter,
+          activeGameRuleFilter,
+        )
       : ["admin", "users", "wallet-transactions"],
     queryFn: () =>
       getAdminUserWalletTransactions(userId as string, page, pageSize, {
         category:
           categoryFilter === ALL_CATEGORIES ? undefined : categoryFilter,
         status:
-          showStatusFilter && statusFilter !== ALL_STATUSES
-            ? statusFilter
+          showStatusFilter && activeStatusFilter !== ALL_STATUSES
+            ? activeStatusFilter
+            : undefined,
+        gameRuleId:
+          activeGameRuleFilter !== ALL_GAME_RULES
+            ? activeGameRuleFilter
             : undefined,
       }),
     enabled: open && Boolean(userId),
@@ -163,6 +207,7 @@ export function PlayerTransactionHistoryDialog({
   const resetFilters = () => {
     setCategoryFilter(ALL_CATEGORIES);
     setStatusFilter(ALL_STATUSES);
+    setGameRuleFilter(ALL_GAME_RULES);
     setPage(1);
   };
 
@@ -194,7 +239,20 @@ export function PlayerTransactionHistoryDialog({
             <Select
               value={categoryFilter}
               onValueChange={(value) => {
-                setCategoryFilter(value as CategoryFilter);
+                const next = value as CategoryFilter;
+                setCategoryFilter(next);
+                if (!categorySupportsStatus(next)) {
+                  setStatusFilter(ALL_STATUSES);
+                } else if (
+                  !statusOptionsForCategory(next).some(
+                    (option) => option.value === statusFilter,
+                  )
+                ) {
+                  setStatusFilter(ALL_STATUSES);
+                }
+                if (next !== "GAME") {
+                  setGameRuleFilter(ALL_GAME_RULES);
+                }
                 setPage(1);
               }}
             >
@@ -213,7 +271,7 @@ export function PlayerTransactionHistoryDialog({
 
             {showStatusFilter ? (
               <Select
-                value={statusFilter}
+                value={activeStatusFilter}
                 onValueChange={(value) => {
                   setStatusFilter(value as StatusFilter);
                   setPage(1);
@@ -226,6 +284,30 @@ export function PlayerTransactionHistoryDialog({
                   {statusOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+
+            {showGameRuleFilter ? (
+              <Select
+                value={activeGameRuleFilter}
+                onValueChange={(value) => {
+                  setGameRuleFilter(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[220px]">
+                  <SelectValue placeholder="Game rule" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_GAME_RULES}>All game rules</SelectItem>
+                  {gameRuleOptions.map((rule) => (
+                    <SelectItem key={rule.id} value={rule.id}>
+                      {rule.isActive === false
+                        ? `${rule.name} (inactive)`
+                        : rule.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

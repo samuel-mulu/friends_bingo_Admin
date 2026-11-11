@@ -24,6 +24,7 @@ import type {
   AdminWalletTransactionReferenceStatus,
   AdminPlayerGameHistoryItem,
   AdminWithdrawal,
+  WithdrawalApprovalSource,
   WithdrawalStatus,
   CreateExpensePayload,
   CreateAdminBroadcastPayload,
@@ -351,6 +352,8 @@ export function getAdminWithdrawals(
     search?: string;
     provider?: PaymentProvider;
     status?: WithdrawalStatus;
+    approvalSource?: WithdrawalApprovalSource;
+    approvedById?: string;
     from?: string;
     to?: string;
   },
@@ -364,6 +367,8 @@ export function getAdminWithdrawals(
       search: options?.search?.trim() || undefined,
       provider: options?.provider,
       status: options?.status,
+      approvalSource: options?.approvalSource,
+      approvedById: options?.approvedById,
       from: options?.from || undefined,
       to: options?.to || undefined,
     },
@@ -543,6 +548,7 @@ export function getAdminUserWalletTransactions(
   filters?: {
     category?: AdminWalletTransactionCategory;
     status?: AdminWalletTransactionReferenceStatus;
+    gameRuleId?: string;
   },
 ) {
   return apiPaginatedRequest<AdminWalletTransaction>({
@@ -553,6 +559,7 @@ export function getAdminUserWalletTransactions(
       pageSize,
       category: filters?.category,
       status: filters?.status,
+      gameRuleId: filters?.gameRuleId,
     },
   });
 }

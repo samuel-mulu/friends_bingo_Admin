@@ -551,6 +551,13 @@ export interface AdminDeposit {
 export type WithdrawalStatus =
   "PENDING" | "APPROVED" | "PAID" | "REJECTED" | "FAILED" | "REFUNDED";
 
+export type WithdrawalApprovalSource = "MANUAL" | "LOCAL" | "AUTOMATIC";
+
+export interface WithdrawalApprover {
+  id: string;
+  fullName: string;
+}
+
 export interface AdminWithdrawal {
   id: string;
   userId: string;
@@ -562,6 +569,9 @@ export interface AdminWithdrawal {
   payoutTransactionUrl: string | null;
   status: WithdrawalStatus;
   adminNote: string | null;
+  approvalSource: WithdrawalApprovalSource | null;
+  approvedBy: WithdrawalApprover | null;
+  approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
   paidAt: string | null;

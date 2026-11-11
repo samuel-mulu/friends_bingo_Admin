@@ -123,6 +123,17 @@ export function formatTelegramWinnerMessage(
   ].join("\n");
 }
 
+/** Display name of the rule played in this round. Blank when the report has none. */
+function chainRoundRuleName(roundWinners: GamesReportWinner[]): string {
+  for (const winner of roundWinners) {
+    const name = winner.gameName?.trim();
+    if (name) {
+      return name;
+    }
+  }
+  return "";
+}
+
 function formatWinnerBlock(winner: GamesReportWinner, label: string): string {
   const name = winner.winnerUser?.fullName?.trim() || "Unknown player";
   const phone = maskPhoneMiddleThree(winner.winnerUser?.phoneNumber);
@@ -179,9 +190,13 @@ function formatChainGameMessage(
 
   const roundBlocks = rounds.map(([round, roundWinners]) => {
     const roundPrize = roundWinners[0]?.sessionPrizeAmount;
+    const ruleName = chainRoundRuleName(roundWinners);
+    const roundLabel = ruleName
+      ? `Round ${round} of ${roundCount} · ${ruleName}`
+      : `Round ${round} of ${roundCount}`;
     const title = roundPrize
-      ? `🔁  Round ${round} of ${roundCount} · ${formatCurrency(roundPrize)}`
-      : `🔁  Round ${round} of ${roundCount}`;
+      ? `🔁  ${roundLabel} · ${formatCurrency(roundPrize)}`
+      : `🔁  ${roundLabel}`;
 
     return [
       title,

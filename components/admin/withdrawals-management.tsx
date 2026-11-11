@@ -13,12 +13,18 @@ import {
 
 import {
   approveWithdrawal,
+  getAdminUsers,
   getAdminWithdrawals,
   markWithdrawalPaid,
   rejectWithdrawal,
 } from "@/lib/api/admin";
 import { getApiErrorMessage } from "@/lib/api/errors";
-import type { AdminWithdrawal, PaymentProvider, WithdrawalStatus } from "@/lib/api/types";
+import type {
+  AdminWithdrawal,
+  PaymentProvider,
+  WithdrawalApprovalSource,
+  WithdrawalStatus,
+} from "@/lib/api/types";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { AdminPagination } from "@/components/admin/admin-pagination";
@@ -147,9 +153,25 @@ function WithdrawalReceiverCell({ withdrawal }: { withdrawal: AdminWithdrawal })
   );
 }
 
+function withdrawalApproverLabel(withdrawal: AdminWithdrawal): string {
+  if (withdrawal.approvalSource === "AUTOMATIC") {
+    return "Automatic";
+  }
+  if (withdrawal.approvalSource === "LOCAL") {
+    return "Local";
+  }
+  if (withdrawal.approvalSource === "MANUAL") {
+    return withdrawal.approvedBy?.fullName?.trim() || "Manual";
+  }
+  return "-";
+}
+
 const pageSize = 20;
 const ALL_PROVIDERS = "all" as const;
 const ALL_STATUSES = "all" as const;
+const ALL_APPROVERS = "all" as const;
+const APPROVER_AUTOMATIC = "AUTOMATIC" as const;
+const APPROVER_LOCAL = "LOCAL" as const;
 const DATE_MODE_ALL = "all" as const;
 const DATE_MODE_RANGE = "range" as const;
 
@@ -163,13 +185,34 @@ const withdrawalProviderOptions: Array<{ key: PaymentProvider; name: string }> =
 
 type ProviderFilter = typeof ALL_PROVIDERS | PaymentProvider;
 type StatusFilter = typeof ALL_STATUSES | WithdrawalStatus;
+type ApproverFilter =
+  | typeof ALL_APPROVERS
+  | typeof APPROVER_AUTOMATIC
+  | typeof APPROVER_LOCAL
+  | string;
 type DateMode = typeof DATE_MODE_ALL | typeof DATE_MODE_RANGE;
+
+function approvalQuery(
+  approver: ApproverFilter,
+): {
+  approvalSource?: WithdrawalApprovalSource;
+  approvedById?: string;
+} {
+  if (approver === APPROVER_AUTOMATIC || approver === APPROVER_LOCAL) {
+    return { approvalSource: approver };
+  }
+  if (approver !== ALL_APPROVERS) {
+    return { approvedById: approver };
+  }
+  return {};
+}
 
 const withdrawalsQueryKey = (
   page: number,
   search: string,
   provider: ProviderFilter,
   status: StatusFilter,
+  approver: ApproverFilter,
   dateMode: DateMode,
   from: string,
   to: string,
@@ -181,6 +224,7 @@ const withdrawalsQueryKey = (
     search,
     provider,
     status,
+    approver,
     dateMode,
     from,
     to,
@@ -204,6 +248,8 @@ export function WithdrawalsManagement() {
   const [providerFilter, setProviderFilter] =
     useState<ProviderFilter>(ALL_PROVIDERS);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(ALL_STATUSES);
+  const [approverFilter, setApproverFilter] =
+    useState<ApproverFilter>(ALL_APPROVERS);
   const [dateMode, setDateMode] = useState<DateMode>(DATE_MODE_ALL);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -228,12 +274,31 @@ export function WithdrawalsManagement() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
+  const approversQuery = useQuery({
+    queryKey: ["admin", "users", "withdrawal-approvers"],
+    queryFn: () =>
+      getAdminUsers(1, 100, {
+        role: "ADMIN",
+        sortBy: "createdAt",
+        sortOrder: "asc",
+      }),
+    staleTime: 60_000,
+  });
+
+  const approverOptions = useMemo(() => {
+    const items = approversQuery.data?.items ?? [];
+    return [...items].sort((left, right) =>
+      left.fullName.localeCompare(right.fullName),
+    );
+  }, [approversQuery.data?.items]);
+
   const withdrawalsQuery = useQuery({
     queryKey: withdrawalsQueryKey(
       page,
       debouncedSearch,
       providerFilter,
       statusFilter,
+      approverFilter,
       dateMode,
       activeFrom,
       activeTo,
@@ -244,6 +309,7 @@ export function WithdrawalsManagement() {
         provider:
           providerFilter === ALL_PROVIDERS ? undefined : providerFilter,
         status: statusFilter === ALL_STATUSES ? undefined : statusFilter,
+        ...approvalQuery(approverFilter),
         from: activeFrom || undefined,
         to: activeTo || undefined,
       }),
@@ -314,6 +380,7 @@ export function WithdrawalsManagement() {
     Boolean(debouncedSearch) ||
     providerFilter !== ALL_PROVIDERS ||
     statusFilter !== ALL_STATUSES ||
+    approverFilter !== ALL_APPROVERS ||
     dateMode !== DATE_MODE_ALL;
 
   const resetFilters = () => {
@@ -321,6 +388,7 @@ export function WithdrawalsManagement() {
     setDebouncedSearch("");
     setProviderFilter(ALL_PROVIDERS);
     setStatusFilter(ALL_STATUSES);
+    setApproverFilter(ALL_APPROVERS);
     setDateMode(DATE_MODE_ALL);
     setFromDate("");
     setToDate("");
@@ -336,8 +404,8 @@ export function WithdrawalsManagement() {
               <CardTitle>Withdrawal operations</CardTitle>
               <CardDescription>
                 Search by player, receiver, or payout reference. Filter by
-                payment method, status, and date. Approve and pay with a payout
-                reference.
+                payment method, status, who approved, and date. Approve and pay
+                with a payout reference.
               </CardDescription>
             </div>
             <div className="rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -416,6 +484,27 @@ export function WithdrawalsManagement() {
                 Pending review
               </Button>
               <Select
+                value={approverFilter}
+                onValueChange={(value) => {
+                  setApproverFilter(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[220px]">
+                  <SelectValue placeholder="Approved by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_APPROVERS}>All approvers</SelectItem>
+                  <SelectItem value={APPROVER_AUTOMATIC}>Automatic</SelectItem>
+                  <SelectItem value={APPROVER_LOCAL}>Local</SelectItem>
+                  {approverOptions.map((admin) => (
+                    <SelectItem key={admin.id} value={admin.id}>
+                      {admin.fullName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
                 value={dateMode}
                 onValueChange={(value) => {
                   const nextMode = value as DateMode;
@@ -488,7 +577,7 @@ export function WithdrawalsManagement() {
 
         <CardContent className="px-0 pt-0">
           {withdrawalsQuery.isLoading ? (
-            <AdminTableSkeleton columns={8} />
+            <AdminTableSkeleton columns={10} />
           ) : withdrawalsQuery.isError ? (
             <AdminErrorState
               title="Could not load withdrawals"
@@ -505,7 +594,7 @@ export function WithdrawalsManagement() {
               }
               description={
                 hasActiveFilters
-                  ? "Try a different search, payment method, status, or date range."
+                  ? "Try a different search, payment method, status, approver, or date range."
                   : "Player cash-out requests will appear here once the first withdrawals are created."
               }
             />
@@ -520,6 +609,8 @@ export function WithdrawalsManagement() {
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Payout URL</TableHead>
+                    <TableHead>Approved by</TableHead>
+                    <TableHead>Approved</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -561,6 +652,16 @@ export function WithdrawalsManagement() {
                               View
                               <ExternalLink className="size-3.5" />
                             </a>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {withdrawalApproverLabel(withdrawal)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {withdrawal.approvedAt ? (
+                            formatDateTime(withdrawal.approvedAt)
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
