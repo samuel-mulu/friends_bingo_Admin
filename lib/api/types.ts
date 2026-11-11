@@ -497,6 +497,17 @@ export interface UpdateAppSupportConfigPayload {
   termsBody?: string;
 }
 
+export interface AppVersionConfig {
+  id: string;
+  releaseNotes: string;
+  updatedAt: string;
+  updatedById: string | null;
+}
+
+export interface UpdateAppVersionConfigPayload {
+  releaseNotes: string;
+}
+
 export interface NotificationConfig {
   id: string;
   pushNotificationsEnabled: boolean;

@@ -48,6 +48,8 @@ import type {
   UpdateAppDisplayConfigPayload,
   AppSupportConfig,
   UpdateAppSupportConfigPayload,
+  AppVersionConfig,
+  UpdateAppVersionConfigPayload,
   NotificationConfig,
   UpdateNotificationConfigPayload,
   ChangeAdminPasswordPayload,
@@ -972,6 +974,23 @@ export function updateAdminSupportConfig(
 ) {
   return apiRequest<AppSupportConfig>({
     url: "/admin/support-config",
+    method: "PATCH",
+    data: payload,
+  });
+}
+
+export function getAdminAppVersionConfig() {
+  return apiRequest<AppVersionConfig>({
+    url: "/admin/app-version-config",
+    method: "GET",
+  });
+}
+
+export function updateAdminAppVersionConfig(
+  payload: UpdateAppVersionConfigPayload,
+) {
+  return apiRequest<AppVersionConfig>({
+    url: "/admin/app-version-config",
     method: "PATCH",
     data: payload,
   });

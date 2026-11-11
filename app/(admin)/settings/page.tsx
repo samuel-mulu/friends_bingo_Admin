@@ -1,3 +1,4 @@
+import { AppVersionConfigManagement } from "@/components/admin/app-version-config-management";
 import { ChangePasswordManagement } from "@/components/admin/change-password-management";
 import { DepositManualApprovalPinManagement } from "@/components/admin/deposit-manual-approval-pin-management";
 import { DisplayConfigManagement } from "@/components/admin/display-config-management";
@@ -12,6 +13,7 @@ export default function SettingsPage() {
       <NotificationConfigManagement />
       <DisplayConfigManagement />
       <SupportConfigManagement />
+      <AppVersionConfigManagement />
       <DepositManualApprovalPinManagement />
       <ChangePasswordManagement />
     </div>
