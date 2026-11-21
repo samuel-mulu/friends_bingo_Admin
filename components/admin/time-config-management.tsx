@@ -35,6 +35,24 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DURATION_UNIT_LABELS,
+  DURATION_UNITS,
+  REGISTRATION_DURATION_MAX_SECONDS,
+  REGISTRATION_DURATION_MIN_SECONDS,
+  formatDurationSeconds,
+  pickDurationUnit,
+  secondsToUnitAmount,
+  unitAmountToSeconds,
+  type DurationUnit,
+} from "@/lib/admin/duration";
 
 const timeConfigQueryKey = ["admin", "time-config"] as const;
 
@@ -50,15 +68,18 @@ type TimingField = {
   max: number;
   step?: number;
   optional?: boolean;
+  /** Stored in seconds, but the admin picks seconds / minutes / hours. */
+  durationPicker?: boolean;
 };
 
 const gameAutomationFields: TimingField[] = [
   {
     key: "registrationDurationSeconds",
-    label: "Registration duration (seconds)",
+    label: "Registration duration",
     hint: "",
-    min: 10,
-    max: 600,
+    min: REGISTRATION_DURATION_MIN_SECONDS,
+    max: REGISTRATION_DURATION_MAX_SECONDS,
+    durationPicker: true,
   },
   {
     key: "autoCallIntervalSeconds",
@@ -252,10 +273,7 @@ function buildUpdatePayload(
     "missedNumberStaggerMaxBalls",
     Number(draft.missedNumberStaggerMaxBalls),
   );
-  compareNumber(
-    "adminRefreshDebounceMs",
-    Number(draft.adminRefreshDebounceMs),
-  );
+  compareNumber("adminRefreshDebounceMs", Number(draft.adminRefreshDebounceMs));
   compareNumber(
     "adminFallbackPollingSeconds",
     Number(draft.adminFallbackPollingSeconds),
@@ -301,6 +319,20 @@ function validateDraft(
     }
 
     const value = Number(raw);
+
+    if (field.durationPicker) {
+      if (!Number.isInteger(value)) {
+        return `${field.label} must be a valid number.`;
+      }
+      if (value < field.min) {
+        return `${field.label} must be at least ${formatDurationSeconds(field.min)}.`;
+      }
+      if (value > field.max) {
+        return `${field.label} is too long.`;
+      }
+      continue;
+    }
+
     if (!Number.isInteger(value)) {
       return `${field.label} must be a whole number.`;
     }
@@ -333,22 +365,144 @@ function TimingFieldGroup({
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent className="grid gap-5 md:grid-cols-2">
-        {fields.map((field) => (
-          <div key={field.key} className="space-y-2">
-            <Label htmlFor={field.key}>{field.label}</Label>
-            <Input
-              id={field.key}
-              type="number"
-              min={field.min}
-              max={field.max}
-              step={field.step ?? 1}
-              value={draft[field.key] ?? ""}
-              onChange={(event) => onChange(field.key, event.target.value)}
+        {fields.map((field) =>
+          field.durationPicker ? (
+            <DurationField
+              key={field.key}
+              field={field}
+              valueSeconds={draft[field.key] ?? ""}
+              onChange={(value) => onChange(field.key, value)}
             />
-          </div>
-        ))}
+          ) : (
+            <div key={field.key} className="space-y-2">
+              <Label htmlFor={field.key}>{field.label}</Label>
+              <Input
+                id={field.key}
+                type="number"
+                min={field.min}
+                max={field.max}
+                step={field.step ?? 1}
+                value={draft[field.key] ?? ""}
+                onChange={(event) => onChange(field.key, event.target.value)}
+              />
+            </div>
+          ),
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Marker emitted for input that cannot be converted to seconds. */
+const INVALID_DURATION = "invalid";
+
+function initialDurationState(valueSeconds: string): {
+  unit: DurationUnit;
+  amount: string;
+} {
+  const seconds = Number(valueSeconds);
+  if (valueSeconds.trim() === "" || !Number.isFinite(seconds)) {
+    return { unit: "seconds", amount: "" };
+  }
+  const unit = pickDurationUnit(seconds);
+  return { unit, amount: secondsToUnitAmount(seconds, unit) };
+}
+
+/**
+ * Amount + unit input (seconds / minutes / hours). The draft always holds
+ * whole seconds — that is what the API stores.
+ */
+function DurationField({
+  field,
+  valueSeconds,
+  onChange,
+}: {
+  field: TimingField;
+  valueSeconds: string;
+  onChange: (valueSeconds: string) => void;
+}) {
+  // `synced` is the seconds value this local state corresponds to. When the
+  // draft changes from outside (reset / reload) we re-derive amount + unit
+  // during render — React's recommended alternative to a syncing effect.
+  const [state, setState] = useState(() => ({
+    ...initialDurationState(valueSeconds),
+    synced: valueSeconds,
+  }));
+
+  if (valueSeconds !== state.synced) {
+    setState({ ...initialDurationState(valueSeconds), synced: valueSeconds });
+  }
+
+  const emit = (amount: string, unit: DurationUnit) => {
+    const seconds = unitAmountToSeconds(amount, unit);
+    const next =
+      seconds == null
+        ? amount.trim() === ""
+          ? ""
+          : INVALID_DURATION
+        : String(seconds);
+    setState({ amount, unit, synced: next });
+    onChange(next);
+  };
+
+  const seconds = unitAmountToSeconds(state.amount, state.unit);
+  const preview =
+    seconds == null
+      ? null
+      : seconds < field.min
+        ? {
+            text: `Minimum is ${formatDurationSeconds(field.min)}.`,
+            error: true,
+          }
+        : seconds > field.max
+          ? { text: "Too long.", error: true }
+          : {
+              text: `= ${formatDurationSeconds(seconds)} (${seconds.toLocaleString()} seconds)`,
+              error: false,
+            };
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={field.key}>{field.label}</Label>
+      <div className="flex gap-2">
+        <Input
+          id={field.key}
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="any"
+          className="flex-1"
+          aria-invalid={preview?.error || undefined}
+          value={state.amount}
+          onChange={(event) => emit(event.target.value, state.unit)}
+        />
+        <Select
+          value={state.unit}
+          onValueChange={(value) => emit(state.amount, value as DurationUnit)}
+        >
+          <SelectTrigger className="w-32" aria-label={`${field.label} unit`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DURATION_UNITS.map((unit) => (
+              <SelectItem key={unit} value={unit}>
+                {DURATION_UNIT_LABELS[unit]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <p
+        className={
+          preview?.error
+            ? "text-xs text-destructive"
+            : "text-xs text-muted-foreground"
+        }
+      >
+        {preview?.text ??
+          `Minimum ${formatDurationSeconds(field.min)}. No maximum.`}
+      </p>
+    </div>
   );
 }
 
@@ -519,7 +673,9 @@ export function TimeConfigManagement() {
               </p>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground">Last saved {lastUpdated}</p>
+          <p className="text-sm text-muted-foreground">
+            Last saved {lastUpdated}
+          </p>
         </CardContent>
       </Card>
 
@@ -554,7 +710,9 @@ export function TimeConfigManagement() {
         </CardHeader>
         <CardContent className="grid gap-5 md:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="normalDefaultEntryFee">Default entry fee (ETB)</Label>
+            <Label htmlFor="normalDefaultEntryFee">
+              Default entry fee (ETB)
+            </Label>
             <Input
               id="normalDefaultEntryFee"
               type="number"
@@ -625,10 +783,7 @@ export function TimeConfigManagement() {
       ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <LoadingButton
-          isLoading={saveMutation.isPending}
-          onClick={handleSave}
-        >
+        <LoadingButton isLoading={saveMutation.isPending} onClick={handleSave}>
           Save defaults
         </LoadingButton>
         <Button variant="outline" onClick={handleReset}>

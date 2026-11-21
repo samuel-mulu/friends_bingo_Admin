@@ -5,6 +5,7 @@ import type {
   GameTimingConfig,
 } from "@/lib/api/types";
 import type { GameOperationItem } from "@/lib/api/admin";
+import { formatDurationSeconds } from "@/lib/admin/duration";
 
 export const DEFAULT_OPERATION_MODE_STORAGE_KEY =
   "friends-bingo-admin.default-operation-mode";
@@ -322,7 +323,7 @@ export function getGameOperationStatusHint(
         context.secondsUntilRegistrationClose != null &&
         context.secondsUntilRegistrationClose > 0
       ) {
-        return `Registration open · closes in ${context.secondsUntilRegistrationClose}s`;
+        return `Registration open · closes in ${formatDurationSeconds(context.secondsUntilRegistrationClose)}`;
       }
 
       return "Registration closed · preparing game…";
@@ -330,7 +331,7 @@ export function getGameOperationStatusHint(
 
     if (context.secondsUntilRegistrationClose != null) {
       if (context.secondsUntilRegistrationClose > 0) {
-        return `Registration open · closes in ${context.secondsUntilRegistrationClose}s`;
+        return `Registration open · closes in ${formatDurationSeconds(context.secondsUntilRegistrationClose)}`;
       }
 
       return "Registration closed · preparing game…";
